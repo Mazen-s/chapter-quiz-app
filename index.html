@@ -128,10 +128,17 @@
                 <!-- Quiz Header & Progress -->
                 <div class="mb-6">
                     <div class="flex justify-between items-end mb-2">
-                        <h2 id="quiz-title" class="text-xl font-bold text-gray-800 dark:text-white truncate pr-4">Quiz Title</h2>
-                        <span id="quiz-progress-text" class="text-sm font-semibold text-primary dark:text-blue-400 whitespace-nowrap">Question 1 of 10</span>
+                        <div class="flex items-center gap-2 pr-4 overflow-hidden">
+                            <h2 id="quiz-title" class="text-xl font-bold text-gray-800 dark:text-white truncate">Quiz Title</h2>
+                            <button onclick="app.renameActiveQuiz()" class="text-gray-400 hover:text-primary transition-colors flex-shrink-0" title="Rename Quiz"><i class="fa-solid fa-pencil text-sm"></i></button>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span id="quiz-progress-text" class="text-sm font-semibold text-primary dark:text-blue-400 whitespace-nowrap">Question 1 of 10</span>
+                            <button onclick="app.resetQuiz()" class="text-gray-400 hover:text-amber-500 transition-colors flex-shrink-0" title="Reset Progress"><i class="fa-solid fa-rotate-left"></i></button>
+                            <button onclick="app.goHome()" class="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0" title="Exit Quiz"><i class="fa-solid fa-xmark text-lg"></i></button>
+                        </div>
                     </div>
-                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
                         <div id="quiz-progress-bar" class="bg-primary dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300" style="width: 10%"></div>
                     </div>
                 </div>
@@ -152,7 +159,7 @@
                         <i class="fa-solid fa-chevron-left mr-1"></i> Previous
                     </button>
                     
-                    <button id="btn-show-answer" class="w-full sm:w-auto px-5 py-2.5 rounded-lg font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors" onclick="app.showAnswer()">
+                    <button id="btn-show-answer" class="w-full sm:w-auto px-5 py-2.5 rounded-lg font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors" onclick="app.toggleAnswer()">
                         <i class="fa-regular fa-eye mr-1"></i> Show Answer
                     </button>
                     
@@ -341,6 +348,51 @@
                 app.switchView('home');
             },
 
+            saveProgress: () => {
+                if (state.activeQuiz) {
+                    const quiz = state.savedQuizzes.find(q => q.id === state.activeQuiz.id);
+                    if (quiz) {
+                        quiz.progress = {
+                            currentIndex: state.currentIndex,
+                            userAnswers: { ...state.userAnswers },
+                            revealedAnswers: { ...state.revealedAnswers }
+                        };
+                        utils.saveToStorage();
+                    }
+                }
+            },
+
+            renameQuiz: (id) => {
+                const quiz = state.savedQuizzes.find(q => q.id === id);
+                if (!quiz) return;
+                const newName = prompt("Enter a new name for this quiz:", quiz.name);
+                if (newName && newName.trim() !== "") {
+                    quiz.name = newName.trim();
+                    utils.saveToStorage();
+                    app.renderHome();
+                }
+            },
+
+            renameActiveQuiz: () => {
+                if (!state.activeQuiz) return;
+                const newName = prompt("Enter a new name for this quiz:", state.activeQuiz.name);
+                if (newName && newName.trim() !== "") {
+                    state.activeQuiz.name = newName.trim();
+                    const quiz = state.savedQuizzes.find(q => q.id === state.activeQuiz.id);
+                    if (quiz) quiz.name = newName.trim();
+                    utils.saveToStorage();
+                    document.getElementById('quiz-title').textContent = newName.trim();
+                }
+            },
+
+            resetQuiz: () => {
+                if(confirm("Are you sure you want to reset your progress for this quiz?")) {
+                    app.resetQuizState();
+                    app.saveProgress();
+                    app.renderQuizUI();
+                }
+            },
+
             // --- HOME VIEW LOGIC ---
             renderHome: () => {
                 const listContainer = document.getElementById('saved-quizzes-list');
@@ -359,16 +411,30 @@
                     noMsg.classList.add('hidden');
                     
                     state.savedQuizzes.forEach(quiz => {
+                        let progressText = `${quiz.questions.length} Questions`;
+                        let startBtnText = '<i class="fa-solid fa-play mr-1"></i> Start';
+                        
+                        if (quiz.progress && Object.keys(quiz.progress.userAnswers).length > 0) {
+                            const answered = Object.keys(quiz.progress.userAnswers).length;
+                            progressText = `${answered}/${quiz.questions.length} Answered`;
+                            startBtnText = '<i class="fa-solid fa-play mr-1"></i> Resume';
+                        }
+
                         const card = document.createElement('div');
                         card.className = 'bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow duration-200';
                         card.innerHTML = `
                             <div>
-                                <h4 class="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1 truncate" title="${utils.escapeHTML(quiz.name)}">${utils.escapeHTML(quiz.name)}</h4>
-                                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">${quiz.questions.length} Questions • Created ${new Date(quiz.createdAt).toLocaleDateString()}</p>
+                                <h4 class="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1 flex items-center justify-between" title="${utils.escapeHTML(quiz.name)}">
+                                    <span class="truncate pr-2">${utils.escapeHTML(quiz.name)}</span>
+                                    <button class="text-gray-400 hover:text-primary transition-colors flex-shrink-0" onclick="app.renameQuiz('${quiz.id}')" title="Rename Quiz">
+                                        <i class="fa-solid fa-pencil text-sm"></i>
+                                    </button>
+                                </h4>
+                                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">${progressText} • Created ${new Date(quiz.createdAt).toLocaleDateString()}</p>
                             </div>
                             <div class="flex gap-2">
                                 <button class="flex-grow bg-blue-50 dark:bg-blue-900/30 text-primary dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-4 py-2 rounded-lg font-medium transition-colors" onclick="app.startQuiz('${quiz.id}')">
-                                    <i class="fa-solid fa-play mr-1"></i> Start
+                                    ${startBtnText}
                                 </button>
                                 <button class="px-4 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors" onclick="app.deleteQuiz('${quiz.id}')" title="Delete Quiz">
                                     <i class="fa-solid fa-trash"></i>
@@ -437,7 +503,13 @@
                 if (!quiz) return;
 
                 state.activeQuiz = quiz;
-                app.resetQuizState();
+                if (quiz.progress) {
+                    state.currentIndex = quiz.progress.currentIndex || 0;
+                    state.userAnswers = { ...quiz.progress.userAnswers } || {};
+                    state.revealedAnswers = { ...quiz.progress.revealedAnswers } || {};
+                } else {
+                    app.resetQuizState();
+                }
                 app.renderQuizUI();
                 app.switchView('quiz');
             },
@@ -538,23 +610,25 @@
 
                 // Show answer button state
                 if (isRevealed) {
-                    btnShow.disabled = true;
-                    btnShow.classList.add('opacity-50', 'cursor-not-allowed');
+                    btnShow.innerHTML = '<i class="fa-regular fa-eye-slash mr-1"></i> Hide Answer';
+                    btnShow.classList.add('bg-amber-100', 'dark:bg-amber-900/50');
                 } else {
-                    btnShow.disabled = false;
-                    btnShow.classList.remove('opacity-50', 'cursor-not-allowed');
+                    btnShow.innerHTML = '<i class="fa-regular fa-eye mr-1"></i> Show Answer';
+                    btnShow.classList.remove('bg-amber-100', 'dark:bg-amber-900/50');
                 }
             },
 
             selectOption: (key) => {
                 if (state.revealedAnswers[state.currentIndex]) return; // Block changes if revealed
                 state.userAnswers[state.currentIndex] = key;
+                app.saveProgress();
                 app.renderQuizUI();
             },
 
             prevQuestion: () => {
                 if (state.currentIndex > 0) {
                     state.currentIndex--;
+                    app.saveProgress();
                     app.renderQuizUI();
                 }
             },
@@ -562,12 +636,14 @@
             nextQuestion: () => {
                 if (state.currentIndex < state.activeQuiz.questions.length - 1) {
                     state.currentIndex++;
+                    app.saveProgress();
                     app.renderQuizUI();
                 }
             },
 
-            showAnswer: () => {
-                state.revealedAnswers[state.currentIndex] = true;
+            toggleAnswer: () => {
+                state.revealedAnswers[state.currentIndex] = !state.revealedAnswers[state.currentIndex];
+                app.saveProgress();
                 app.renderQuizUI();
             },
 
@@ -579,6 +655,7 @@
 
             redoQuiz: () => {
                 app.resetQuizState();
+                app.saveProgress();
                 app.renderQuizUI();
                 app.switchView('quiz');
             },
