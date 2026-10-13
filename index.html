@@ -133,6 +133,7 @@
                             <button onclick="app.renameActiveQuiz()" class="text-gray-400 hover:text-primary transition-colors flex-shrink-0" title="Rename Quiz"><i class="fa-solid fa-pencil text-sm"></i></button>
                         </div>
                         <div class="flex items-center gap-4">
+                            <span id="quiz-timer" class="text-sm font-mono font-bold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-md">00:00</span>
                             <span id="quiz-progress-text" class="text-sm font-semibold text-primary dark:text-blue-400 whitespace-nowrap">Question 1 of 10</span>
                             <button onclick="app.resetQuiz()" class="text-gray-400 hover:text-amber-500 transition-colors flex-shrink-0" title="Reset Progress"><i class="fa-solid fa-rotate-left"></i></button>
                             <button onclick="app.goHome()" class="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0" title="Exit Quiz"><i class="fa-solid fa-xmark text-lg"></i></button>
@@ -167,8 +168,8 @@
                         Next <i class="fa-solid fa-chevron-right ml-1"></i>
                     </button>
                     
-                    <button id="btn-grade" class="hidden w-full sm:w-auto px-5 py-2.5 rounded-lg font-bold text-white bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 transition-colors shadow-sm" onclick="app.gradeQuiz()">
-                        Grade Quiz <i class="fa-solid fa-check-double ml-1"></i>
+                    <button id="btn-submit" class="hidden w-full sm:w-auto px-5 py-2.5 rounded-lg font-bold text-white bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 transition-colors shadow-sm" onclick="app.submitQuiz()">
+                        Submit <i class="fa-solid fa-check-double ml-1"></i>
                     </button>
                 </div>
             </div>
@@ -192,6 +193,8 @@
                     </div>
                 </div>
                 
+                <p id="results-time-taken" class="text-gray-600 dark:text-gray-300 mb-6 font-medium">Time Taken: 00:00</p>
+                
                 <div class="flex justify-center gap-4">
                     <button class="px-6 py-2.5 rounded-lg font-medium text-white bg-primary dark:bg-blue-600 hover:bg-primaryHover dark:hover:bg-blue-700 transition-colors shadow-sm" onclick="app.redoQuiz()">
                         <i class="fa-solid fa-rotate-right mr-1"></i> Redo Quiz
@@ -199,6 +202,14 @@
                     <button class="px-6 py-2.5 rounded-lg font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" onclick="app.goHome()">
                         Back to Home
                     </button>
+                </div>
+            </div>
+
+            <!-- Past Attempts Section -->
+            <div id="attempts-section" class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 md:p-8 mb-6 transition-colors duration-200 hidden">
+                <h3 class="text-xl font-bold mb-4 text-gray-800 dark:text-white border-b border-gray-100 dark:border-gray-700 pb-2">Past Attempts</h3>
+                <div id="attempts-list" class="flex flex-wrap gap-2">
+                    <!-- Attempt buttons generated here -->
                 </div>
             </div>
 
@@ -224,11 +235,18 @@
             currentIndex: 0,
             userAnswers: {}, // key: question index, value: selected option ('A', 'B', etc.)
             revealedAnswers: {}, // key: question index, value: boolean
-            isDarkMode: false
+            isDarkMode: false,
+            timerInterval: null,
+            elapsedTime: 0
         };
 
         const utils = {
             generateId: () => Date.now().toString(36) + Math.random().toString(36).substr(2),
+            formatTime: (seconds) => {
+                const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const s = (seconds % 60).toString().padStart(2, '0');
+                return `${m}:${s}`;
+            },
             escapeHTML: (str) => {
                 if (!str) return '';
                 return str.replace(/[&<>'"]/g, 
@@ -342,10 +360,37 @@
                 window.scrollTo(0,0);
             },
 
+            startTimer: () => {
+                app.stopTimer();
+                document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
+                state.timerInterval = setInterval(() => {
+                    state.elapsedTime++;
+                    document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
+                    // Save progress automatically every 5 seconds
+                    if (state.elapsedTime % 5 === 0) app.saveProgress();
+                }, 1000);
+            },
+
+            stopTimer: () => {
+                if (state.timerInterval) {
+                    clearInterval(state.timerInterval);
+                    state.timerInterval = null;
+                }
+            },
+
             goHome: () => {
+                app.stopTimer();
                 state.activeQuiz = null;
                 app.renderHome();
                 app.switchView('home');
+            },
+
+            viewHistory: (id) => {
+                const quiz = state.savedQuizzes.find(q => q.id === id);
+                if (!quiz || !quiz.attempts || quiz.attempts.length === 0) return;
+                state.activeQuiz = quiz;
+                app.renderResults(); // Defaults to rendering the latest attempt
+                app.switchView('results');
             },
 
             saveProgress: () => {
@@ -355,7 +400,8 @@
                         quiz.progress = {
                             currentIndex: state.currentIndex,
                             userAnswers: { ...state.userAnswers },
-                            revealedAnswers: { ...state.revealedAnswers }
+                            revealedAnswers: { ...state.revealedAnswers },
+                            elapsedTime: state.elapsedTime
                         };
                         utils.saveToStorage();
                     }
@@ -390,6 +436,7 @@
                     app.resetQuizState();
                     app.saveProgress();
                     app.renderQuizUI();
+                    document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
                 }
             },
 
@@ -418,6 +465,19 @@
                             const answered = Object.keys(quiz.progress.userAnswers).length;
                             progressText = `${answered}/${quiz.questions.length} Answered`;
                             startBtnText = '<i class="fa-solid fa-play mr-1"></i> Resume';
+                        } else if (quiz.attempts && quiz.attempts.length > 0) {
+                            const lastAttempt = quiz.attempts[quiz.attempts.length - 1];
+                            const pct = Math.round((lastAttempt.correctCount / lastAttempt.total) * 100);
+                            progressText = `${quiz.questions.length} Questions • Last Score: ${pct}%`;
+                        }
+
+                        let historyBtnHtml = '';
+                        if (quiz.attempts && quiz.attempts.length > 0) {
+                            historyBtnHtml = `
+                                <button class="px-4 py-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-lg transition-colors" onclick="app.viewHistory('${quiz.id}')" title="View Past Attempts">
+                                    <i class="fa-solid fa-clock-rotate-left"></i>
+                                </button>
+                            `;
                         }
 
                         const card = document.createElement('div');
@@ -436,6 +496,7 @@
                                 <button class="flex-grow bg-blue-50 dark:bg-blue-900/30 text-primary dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-4 py-2 rounded-lg font-medium transition-colors" onclick="app.startQuiz('${quiz.id}')">
                                     ${startBtnText}
                                 </button>
+                                ${historyBtnHtml}
                                 <button class="px-4 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors" onclick="app.deleteQuiz('${quiz.id}')" title="Delete Quiz">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
@@ -507,17 +568,20 @@
                     state.currentIndex = quiz.progress.currentIndex || 0;
                     state.userAnswers = { ...quiz.progress.userAnswers } || {};
                     state.revealedAnswers = { ...quiz.progress.revealedAnswers } || {};
+                    state.elapsedTime = quiz.progress.elapsedTime || 0;
                 } else {
                     app.resetQuizState();
                 }
                 app.renderQuizUI();
                 app.switchView('quiz');
+                app.startTimer();
             },
 
             resetQuizState: () => {
                 state.currentIndex = 0;
                 state.userAnswers = {};
                 state.revealedAnswers = {};
+                state.elapsedTime = 0;
             },
 
             renderQuizUI: () => {
@@ -597,15 +661,15 @@
                 document.getElementById('btn-prev').disabled = index === 0;
                 
                 const btnNext = document.getElementById('btn-next');
-                const btnGrade = document.getElementById('btn-grade');
+                const btnSubmit = document.getElementById('btn-submit');
                 const btnShow = document.getElementById('btn-show-answer');
 
                 if (index === quiz.questions.length - 1) {
                     btnNext.classList.add('hidden');
-                    btnGrade.classList.remove('hidden');
+                    btnSubmit.classList.remove('hidden');
                 } else {
                     btnNext.classList.remove('hidden');
-                    btnGrade.classList.add('hidden');
+                    btnSubmit.classList.add('hidden');
                 }
 
                 // Show answer button state
@@ -648,7 +712,9 @@
             },
 
             // --- RESULTS VIEW LOGIC ---
-            gradeQuiz: () => {
+            submitQuiz: () => {
+                app.stopTimer();
+                app.saveProgress();
                 app.renderResults();
                 app.switchView('results');
             },
@@ -658,19 +724,67 @@
                 app.saveProgress();
                 app.renderQuizUI();
                 app.switchView('quiz');
+                app.startTimer();
             },
 
             renderResults: () => {
+                quiz.attempts.push(newAttempt);
+                
+                // Clear active progress so a fresh try starts later
+                quiz.progress = null;
+                app.resetQuizState(); 
+                utils.saveToStorage();
+
+                app.renderResults(newAttempt.id);
+                app.switchView('results');
+            },
+
+            redoQuiz: () => {
+                app.resetQuizState();
+                app.saveProgress(); // clear progress from storage
+                app.renderQuizUI();
+                app.switchView('quiz');
+            },
+
+            renderResults: (attemptId) => {
                 const quiz = state.activeQuiz;
-                let correctCount = 0;
+                if (!quiz.attempts || quiz.attempts.length === 0) return;
+
+                // Grab requested attempt, fallback to latest attempt
+                const attempt = attemptId 
+                    ? quiz.attempts.find(a => a.id === attemptId) || quiz.attempts[quiz.attempts.length - 1]
+                    : quiz.attempts[quiz.attempts.length - 1];
+
+                const userAnswersToReview = attempt.userAnswers;
+                const correctCount = attempt.correctCount;
+
+                // Render Attempts History UI
+                const attemptsSection = document.getElementById('attempts-section');
+                const attemptsList = document.getElementById('attempts-list');
+                
+                if (quiz.attempts.length > 1) {
+                    attemptsSection.classList.remove('hidden');
+                    attemptsList.innerHTML = '';
+                    quiz.attempts.forEach((att, idx) => {
+                        const btn = document.createElement('button');
+                        const isSelected = att.id === attempt.id;
+                        btn.className = `px-4 py-2 rounded-lg text-sm transition-colors text-left ${isSelected ? 'bg-primary text-white dark:bg-blue-600 shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 border border-transparent dark:border-gray-600'}`;
+                        const pct = Math.round((att.correctCount / att.total) * 100);
+                        const dateStr = new Date(att.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        btn.innerHTML = `<span class="font-bold">Attempt ${idx + 1}</span> <span class="ml-1 opacity-80 font-medium">(${pct}%)</span><div class="text-[11px] opacity-70 mt-0.5">${dateStr}</div>`;
+                        btn.onclick = () => app.renderResults(att.id);
+                        attemptsList.appendChild(btn);
+                    });
+                } else {
+                    attemptsSection.classList.add('hidden');
+                }
 
                 const listContainer = document.getElementById('results-list');
                 listContainer.innerHTML = '';
 
                 quiz.questions.forEach((q, index) => {
-                    const userAns = state.userAnswers[index];
+                    const userAns = userAnswersToReview[index];
                     const isCorrect = userAns === q.correctAnswer;
-                    if (isCorrect) correctCount++;
 
                     const itemDiv = document.createElement('div');
                     itemDiv.className = 'flex flex-col gap-3';
@@ -727,6 +841,7 @@
                 const percentage = Math.round((correctCount / quiz.questions.length) * 100);
                 document.getElementById('score-percentage').textContent = `${percentage}%`;
                 document.getElementById('score-fraction').textContent = `${correctCount}/${quiz.questions.length}`;
+                document.getElementById('results-time-taken').textContent = `Time Taken: ${utils.formatTime(state.elapsedTime)}`;
                 
                 // Animate SVG Circle
                 const circle = document.getElementById('score-circle');
