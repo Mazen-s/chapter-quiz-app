@@ -294,14 +294,23 @@
                         if (!item.transform) return;
                         
                         const currentY = Math.round(item.transform[5]);
+                        let str = item.str;
+
+                        // Detect bold font to identify correct answers in Test Banks
+                        if (item.fontName && item.fontName.toLowerCase().includes('bold')) {
+                            // Only mark it if it looks like an option letter "A.", "B)", etc.
+                            if (/^[A-E][\.\)]?$/.test(str.trim())) {
+                                str = `[[CORRECT_${str.trim()}]]`;
+                            }
+                        }
                         
                         // If the Y coordinate changes by more than 4 points, treat it as a new line
                         if (lastY !== -1 && Math.abs(lastY - currentY) > 4) {
                             pageStr += '\n';
-                        } else if (lastY !== -1 && !pageStr.endsWith(' ') && !item.str.startsWith(' ')) {
+                        } else if (lastY !== -1 && !pageStr.endsWith(' ') && !str.startsWith(' ')) {
                             pageStr += ' ';
                         }
-                        pageStr += item.str;
+                        pageStr += str;
                         lastY = currentY;
                     });
                     
@@ -333,17 +342,20 @@
                     const qNum = match[1].trim();
                     let content = match[2].trim();
                     
-                    let correctAnswer = 'A'; // Default fallback
+                    let correctAnswer = null; 
+                    let hasExplicitAnswer = false;
                     
                     // Try Format 1: "Answer: A"
                     const ansMatch = content.match(/Answer:\s*([A-E])/i);
                     if (ansMatch) {
                         correctAnswer = ansMatch[1].toUpperCase();
+                        hasExplicitAnswer = true;
                         content = content.replace(ansMatch[0], '');
                     }
 
-                    // Extract options A, B, C, D, E. Also handles LaTeX formats like $\underline{E}.$
-                    const optRegex = /(?:^|\n|\s+)(?:([A-E])[\)\.]|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)\s+/gi;
+                    // Extract options A, B, C, D, E. 
+                    // Matches standard "A.", bold "[[CORRECT_A.]]", asterisk "*A.", and LaTeX "$\underline{A}$"
+                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]|([A-E])[\)\.]|\[\[CORRECT_([A-E])[\)\.]?\]\][\)\.]?|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)\s+/gi;
                     
                     let options = {};
                     let lastOpt = null;
@@ -359,12 +371,14 @@
                             options[lastOpt] = content.substring(lastIdx, optMatch.index).trim();
                         }
                         
-                        lastOpt = (optMatch[1] || optMatch[2]).toUpperCase();
+                        let hasAsterisk = !!optMatch[1];
+                        lastOpt = (optMatch[2] || optMatch[3] || optMatch[4] || optMatch[5]).toUpperCase();
                         lastIdx = optMatch.index + optMatch[0].length;
                         
-                        // If this option was underlined in the Key section, we log it as the answer
-                        if (optMatch[2]) {
-                            correctAnswer = optMatch[2].toUpperCase();
+                        // If marked as bold, asterisk, or underlined, log it as the correct answer
+                        if (hasAsterisk || optMatch[4] || optMatch[5]) {
+                            correctAnswer = lastOpt;
+                            hasExplicitAnswer = true;
                         }
                     }
                     
@@ -382,8 +396,18 @@
 
                     // Only add if it actually parsed valid options (at least A and B)
                     if (Object.keys(options).length >= 2) {
-                        // Overwrite map if we find a better correct answer indicator (like when parsing the Key section later in the document)
-                        if (!questionsMap.has(qNum) || ansMatch || content.includes('\\underline')) {
+                        
+                        // Preserve previous answer if we didn't find a new explicit one (prevents the Key from resetting it)
+                        if (!correctAnswer) {
+                            if (questionsMap.has(qNum)) {
+                                correctAnswer = questionsMap.get(qNum).correctAnswer;
+                            } else {
+                                correctAnswer = 'A'; // Last resort fallback for completely unknown answers
+                            }
+                        }
+
+                        // Overwrite map if we found a new explicit answer, or if it's the first time we see this question
+                        if (!questionsMap.has(qNum) || hasExplicitAnswer) {
                             questionsMap.set(qNum, {
                                 number: qNum,
                                 text: questionText,
