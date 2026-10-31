@@ -334,13 +334,12 @@
 
                 const questionsMap = new Map();
 
-                // Safely relies on the reconstructed line breaks
-                const qRegex = /(?:^|\n)\s*(\d+)[\)\.]\s+([\s\S]*?)(?=(?:\n\s*\d+[\)\.]\s+)|$)/g;
+                // Split the text strictly by question numbers at the start of lines to prevent missing questions
+                const parts = cleanText.split(/(?:^|\n)\s*(\d+)[\)\.]\s+/);
                 
-                let match;
-                while ((match = qRegex.exec(cleanText)) !== null) {
-                    const qNum = match[1].trim();
-                    let content = match[2].trim();
+                for (let i = 1; i < parts.length; i += 2) {
+                    const qNum = parts[i].trim();
+                    let content = parts[i + 1].trim();
                     
                     let correctAnswer = null; 
                     let hasExplicitAnswer = false;
@@ -354,16 +353,14 @@
                     }
 
                     // Extract options A, B, C, D, E. 
-                    // Matches standard "A.", bold "[[CORRECT_A.]]", asterisk "*A.", and LaTeX "$\underline{A}$"
-                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]|([A-E])[\)\.]|\[\[CORRECT_([A-E])[\)\.]?\]\][\)\.]?|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)\s+/gi;
+                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]|([A-E])[\)\.]|\[\[CORRECT_([A-E])[\)\.]?\]\][\)\.]?|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)(?=\s|$)/gi;
                     
                     let options = {};
                     let lastOpt = null;
                     let lastIdx = 0;
-                    
-                    let optMatch;
                     let firstOptIdx = -1;
                     
+                    let optMatch;
                     while ((optMatch = optRegex.exec(content)) !== null) {
                         if (firstOptIdx === -1) firstOptIdx = optMatch.index;
                         
@@ -375,34 +372,55 @@
                         lastOpt = (optMatch[2] || optMatch[3] || optMatch[4] || optMatch[5]).toUpperCase();
                         lastIdx = optMatch.index + optMatch[0].length;
                         
-                        // If marked as bold, asterisk, or underlined, log it as the correct answer
                         if (hasAsterisk || optMatch[4] || optMatch[5]) {
                             correctAnswer = lastOpt;
                             hasExplicitAnswer = true;
                         }
                     }
                     
+                    let explanation = "";
                     if (lastOpt) {
-                        // Get the rest of the text for the last option, truncate at metadata sections
                         let lastText = content.substring(lastIdx).trim();
+                        // Strip metadata blocks
                         const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter|Student:)/i);
                         if (metaMatch) {
                             lastText = lastText.substring(0, metaMatch.index).trim();
                         }
-                        options[lastOpt] = lastText;
+                        
+                        // Check if an explanation is attached to the bottom of the last option
+                        const lastTextParts = lastText.split(/\n/);
+                        if (lastTextParts.length > 1) {
+                            options[lastOpt] = lastTextParts[0].trim();
+                            explanation = lastTextParts.slice(1).join(' ').trim();
+                        } else {
+                            options[lastOpt] = lastText;
+                        }
                     }
 
                     const questionText = firstOptIdx !== -1 ? content.substring(0, firstOptIdx).trim() : content;
 
-                    // Only add if it actually parsed valid options (at least A and B)
                     if (Object.keys(options).length >= 2) {
                         
+                        // Intelligent check: If we have an explanation but no explicitly marked answer,
+                        // check if one of the option texts is literally embedded in the explanation.
+                        if (!correctAnswer && explanation) {
+                            const expLower = explanation.toLowerCase();
+                            for (const [key, text] of Object.entries(options)) {
+                                const cleanOptText = text.toLowerCase().trim();
+                                if (cleanOptText.length > 2 && (expLower.includes(cleanOptText) || cleanOptText.includes(expLower))) {
+                                    correctAnswer = key;
+                                    hasExplicitAnswer = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         // Preserve previous answer if we didn't find a new explicit one (prevents the Key from resetting it)
                         if (!correctAnswer) {
                             if (questionsMap.has(qNum)) {
                                 correctAnswer = questionsMap.get(qNum).correctAnswer;
                             } else {
-                                correctAnswer = 'A'; // Last resort fallback for completely unknown answers
+                                correctAnswer = 'A'; // Last resort fallback
                             }
                         }
 
@@ -816,24 +834,30 @@
             // --- RESULTS VIEW LOGIC ---
             submitQuiz: () => {
                 app.stopTimer();
-                app.saveProgress();
-                app.renderResults();
-                app.switchView('results');
-            },
+                const quiz = state.activeQuiz;
+                
+                let correctCount = 0;
+                quiz.questions.forEach((q, i) => {
+                    if (state.userAnswers[i] === q.correctAnswer) {
+                        correctCount++;
+                    }
+                });
 
-            redoQuiz: () => {
-                app.resetQuizState();
-                app.saveProgress();
-                app.renderQuizUI();
-                app.switchView('quiz');
-                app.startTimer();
-            },
+                const newAttempt = {
+                    id: utils.generateId(),
+                    date: Date.now(),
+                    correctCount: correctCount,
+                    total: quiz.questions.length,
+                    userAnswers: { ...state.userAnswers },
+                    elapsedTime: state.elapsedTime
+                };
 
-            renderResults: () => {
+                if (!quiz.attempts) quiz.attempts = [];
                 quiz.attempts.push(newAttempt);
                 
                 // Clear active progress so a fresh try starts later
                 quiz.progress = null;
+                
                 app.resetQuizState(); 
                 utils.saveToStorage();
 
@@ -846,6 +870,7 @@
                 app.saveProgress(); // clear progress from storage
                 app.renderQuizUI();
                 app.switchView('quiz');
+                app.startTimer();
             },
 
             renderResults: (attemptId) => {
