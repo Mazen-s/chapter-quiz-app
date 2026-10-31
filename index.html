@@ -297,27 +297,77 @@
                     .replace(/\[Page \d+\]/gi, '')
                     .replace(/Made with Goodnotes/gi, '');
 
-                const questions = [];
-                // Regex pattern based on requirements:
-                // 1) Question text A) option B) option C) option D) option Answer: A
-                // Uses [\s\S]*? to capture multiline text non-greedily between markers.
-                const regex = /(?:^|\s)(\d+)\)\s+([\s\S]*?)\s+A\)\s+([\s\S]*?)\s+B\)\s+([\s\S]*?)\s+C\)\s+([\s\S]*?)\s+D\)\s+([\s\S]*?)\s+Answer:\s*([A-D])/g;
+                const questionsMap = new Map();
+
+                // Match both "1)" and "1." styles for question starts
+                const qRegex = /(?:^|\n)(\d+)[\)\.]\s+([\s\S]*?)(?=(?:\n\d+[\)\.]\s+)|$)/g;
                 
                 let match;
-                while ((match = regex.exec(cleanText)) !== null) {
-                    questions.push({
-                        number: match[1].trim(),
-                        text: match[2].trim(),
-                        options: {
-                            'A': match[3].trim(),
-                            'B': match[4].trim(),
-                            'C': match[5].trim(),
-                            'D': match[6].trim()
-                        },
-                        correctAnswer: match[7].toUpperCase().trim()
-                    });
+                while ((match = qRegex.exec(cleanText)) !== null) {
+                    const qNum = match[1].trim();
+                    let content = match[2].trim();
+                    
+                    let correctAnswer = 'A'; // Default fallback if no answer key is found
+                    
+                    // Try Format 1: "Answer: A"
+                    const ansMatch = content.match(/Answer:\s*([A-E])/i);
+                    if (ansMatch) {
+                        correctAnswer = ansMatch[1].toUpperCase();
+                        content = content.replace(ansMatch[0], ''); // Remove from option content
+                    }
+
+                    // Extract options A, B, C, D, E (and variations like \underline{E})
+                    const optRegex = /(?:^|\s+)(?:([A-E])[\)\.]|\\underline\{([A-E])\}[\)\.])\s+/gi;
+                    
+                    let options = {};
+                    let lastOpt = null;
+                    let lastIdx = 0;
+                    
+                    let optMatch;
+                    let firstOptIdx = -1;
+                    
+                    while ((optMatch = optRegex.exec(content)) !== null) {
+                        if (firstOptIdx === -1) firstOptIdx = optMatch.index;
+                        
+                        if (lastOpt) {
+                            options[lastOpt] = content.substring(lastIdx, optMatch.index).trim();
+                        }
+                        lastOpt = (optMatch[1] || optMatch[2]).toUpperCase();
+                        lastIdx = optMatch.index + optMatch[0].length;
+                        
+                        // If this option was underlined, assume it's the correct answer
+                        if (optMatch[2]) {
+                            correctAnswer = optMatch[2].toUpperCase();
+                        }
+                    }
+                    
+                    if (lastOpt) {
+                        // Get the rest of the text for the last option, truncate at metadata
+                        let lastText = content.substring(lastIdx).trim();
+                        const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter)/i);
+                        if (metaMatch) {
+                            lastText = lastText.substring(0, metaMatch.index).trim();
+                        }
+                        options[lastOpt] = lastText;
+                    }
+
+                    const questionText = firstOptIdx !== -1 ? content.substring(0, firstOptIdx).trim() : content;
+
+                    // Only add if it actually parsed valid options
+                    if (Object.keys(options).length >= 2) {
+                        // Overwrite map if we find a better correct answer indicator (like in the Key section)
+                        if (!questionsMap.has(qNum) || ansMatch || content.includes('\\underline')) {
+                            questionsMap.set(qNum, {
+                                number: qNum,
+                                text: questionText,
+                                options: options,
+                                correctAnswer: correctAnswer
+                            });
+                        }
+                    }
                 }
-                return questions;
+                
+                return Array.from(questionsMap.values());
             }
         };
 
@@ -605,7 +655,7 @@
                 const isRevealed = state.revealedAnswers[index];
                 const selectedAns = state.userAnswers[index];
 
-                ['A', 'B', 'C', 'D'].forEach(key => {
+                ['A', 'B', 'C', 'D', 'E'].forEach(key => {
                     const optionText = question.options[key];
                     if (!optionText) return;
 
@@ -796,7 +846,7 @@
                             : `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold uppercase tracking-wider"><i class="fa-solid fa-minus"></i> Skipped</span>`);
 
                     let optionsHtml = '';
-                    ['A', 'B', 'C', 'D'].forEach(key => {
+                    ['A', 'B', 'C', 'D', 'E'].forEach(key => {
                         if (!q.options[key]) return;
                         const isThisCorrect = key === q.correctAnswer;
                         const isThisUserSelected = key === userAns;
