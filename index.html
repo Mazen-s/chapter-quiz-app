@@ -285,39 +285,65 @@
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(' ');
-                    fullText += pageText + '\n';
+                    
+                    let pageStr = '';
+                    let lastY = -1;
+                    
+                    // Reconstruct line breaks using the Y-coordinates of the text elements
+                    textContent.items.forEach(item => {
+                        if (!item.transform) return;
+                        
+                        const currentY = Math.round(item.transform[5]);
+                        
+                        // If the Y coordinate changes by more than 4 points, treat it as a new line
+                        if (lastY !== -1 && Math.abs(lastY - currentY) > 4) {
+                            pageStr += '\n';
+                        } else if (lastY !== -1 && !pageStr.endsWith(' ') && !item.str.startsWith(' ')) {
+                            pageStr += ' ';
+                        }
+                        pageStr += item.str;
+                        lastY = currentY;
+                    });
+                    
+                    fullText += pageStr + '\n\n';
                 }
                 return fullText;
             },
             
             parseQuestions: (rawText) => {
-                // Pre-clean common PDF artifacts to improve regex matching
-                const cleanText = rawText
+                // Pre-clean common PDF artifacts
+                let cleanText = rawText
                     .replace(/\[Page \d+\]/gi, '')
                     .replace(/Made with Goodnotes/gi, '');
+                    
+                // Normalize Greek/Cyrillic lookalikes to ASCII letters so our A-E regex matches
+                cleanText = cleanText
+                    .replace(/[\u0391\u0410]/g, 'A') // Alpha / Cyrillic A
+                    .replace(/[\u0392\u0412]/g, 'B') // Beta / Cyrillic B
+                    .replace(/[\u0421]/g, 'C')       // Cyrillic C
+                    .replace(/[\u0395\u0415]/g, 'E'); // Epsilon / Cyrillic E
 
                 const questionsMap = new Map();
 
-                // Match both "1)" and "1." styles for question starts
-                const qRegex = /(?:^|\n)(\d+)[\)\.]\s+([\s\S]*?)(?=(?:\n\d+[\)\.]\s+)|$)/g;
+                // Safely relies on the reconstructed line breaks
+                const qRegex = /(?:^|\n)\s*(\d+)[\)\.]\s+([\s\S]*?)(?=(?:\n\s*\d+[\)\.]\s+)|$)/g;
                 
                 let match;
                 while ((match = qRegex.exec(cleanText)) !== null) {
                     const qNum = match[1].trim();
                     let content = match[2].trim();
                     
-                    let correctAnswer = 'A'; // Default fallback if no answer key is found
+                    let correctAnswer = 'A'; // Default fallback
                     
                     // Try Format 1: "Answer: A"
                     const ansMatch = content.match(/Answer:\s*([A-E])/i);
                     if (ansMatch) {
                         correctAnswer = ansMatch[1].toUpperCase();
-                        content = content.replace(ansMatch[0], ''); // Remove from option content
+                        content = content.replace(ansMatch[0], '');
                     }
 
-                    // Extract options A, B, C, D, E (and variations like \underline{E})
-                    const optRegex = /(?:^|\s+)(?:([A-E])[\)\.]|\\underline\{([A-E])\}[\)\.])\s+/gi;
+                    // Extract options A, B, C, D, E. Also handles LaTeX formats like $\underline{E}.$
+                    const optRegex = /(?:^|\n|\s+)(?:([A-E])[\)\.]|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)\s+/gi;
                     
                     let options = {};
                     let lastOpt = null;
@@ -332,19 +358,20 @@
                         if (lastOpt) {
                             options[lastOpt] = content.substring(lastIdx, optMatch.index).trim();
                         }
+                        
                         lastOpt = (optMatch[1] || optMatch[2]).toUpperCase();
                         lastIdx = optMatch.index + optMatch[0].length;
                         
-                        // If this option was underlined, assume it's the correct answer
+                        // If this option was underlined in the Key section, we log it as the answer
                         if (optMatch[2]) {
                             correctAnswer = optMatch[2].toUpperCase();
                         }
                     }
                     
                     if (lastOpt) {
-                        // Get the rest of the text for the last option, truncate at metadata
+                        // Get the rest of the text for the last option, truncate at metadata sections
                         let lastText = content.substring(lastIdx).trim();
-                        const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter)/i);
+                        const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter|Student:)/i);
                         if (metaMatch) {
                             lastText = lastText.substring(0, metaMatch.index).trim();
                         }
@@ -353,9 +380,9 @@
 
                     const questionText = firstOptIdx !== -1 ? content.substring(0, firstOptIdx).trim() : content;
 
-                    // Only add if it actually parsed valid options
+                    // Only add if it actually parsed valid options (at least A and B)
                     if (Object.keys(options).length >= 2) {
-                        // Overwrite map if we find a better correct answer indicator (like in the Key section)
+                        // Overwrite map if we find a better correct answer indicator (like when parsing the Key section later in the document)
                         if (!questionsMap.has(qNum) || ansMatch || content.includes('\\underline')) {
                             questionsMap.set(qNum, {
                                 number: qNum,
@@ -367,7 +394,8 @@
                     }
                 }
                 
-                return Array.from(questionsMap.values());
+                // Return sorted array based on true question integer order
+                return Array.from(questionsMap.values()).sort((a, b) => parseInt(a.number) - parseInt(b.number));
             }
         };
 
