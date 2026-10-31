@@ -296,11 +296,25 @@
                         const currentY = Math.round(item.transform[5]);
                         let str = item.str;
 
-                        // Detect bold font to identify correct answers in Test Banks
-                        if (item.fontName && item.fontName.toLowerCase().includes('bold')) {
-                            // Only mark it if it looks like an option letter "A.", "B)", etc.
-                            if (/^[A-E][\.\)]?$/.test(str.trim())) {
-                                str = `[[CORRECT_${str.trim()}]]`;
+                        // Smart Test Bank Answer Detection: Track fonts to isolate bold keys
+                        const cleanStr = str.trim();
+                        if (/^[A-E][\.\)]?$/.test(cleanStr) || /^[A-E]$/.test(cleanStr)) {
+                            const letterMatch = cleanStr.match(/[A-E\u0391-\u0395\u0410-\u0415\u0421]/);
+                            if (letterMatch) {
+                                let letter = letterMatch[0]
+                                    .replace(/[\u0391\u0410]/, 'A')
+                                    .replace(/[\u0392\u0412]/, 'B')
+                                    .replace(/[\u0421]/, 'C')
+                                    .replace(/[\u0395\u0415]/, 'E');
+
+                                if (['A','B','C','D','E'].includes(letter)) {
+                                    if (item.fontName && item.fontName.toLowerCase().includes('bold')) {
+                                        str = str.replace(letterMatch[0], `[[CORRECT_${letter}]]`);
+                                    } else {
+                                        const fName = item.fontName || 'unknown';
+                                        str = str.replace(letterMatch[0], `[[OPT_${fName}_${letter}]]`);
+                                    }
+                                }
                             }
                         }
                         
@@ -325,12 +339,12 @@
                     .replace(/\[Page \d+\]/gi, '')
                     .replace(/Made with Goodnotes/gi, '');
                     
-                // Normalize Greek/Cyrillic lookalikes to ASCII letters so our A-E regex matches
+                // Normalize Greek/Cyrillic lookalikes to ASCII letters
                 cleanText = cleanText
-                    .replace(/[\u0391\u0410]/g, 'A') // Alpha / Cyrillic A
-                    .replace(/[\u0392\u0412]/g, 'B') // Beta / Cyrillic B
-                    .replace(/[\u0421]/g, 'C')       // Cyrillic C
-                    .replace(/[\u0395\u0415]/g, 'E'); // Epsilon / Cyrillic E
+                    .replace(/[\u0391\u0410]/g, 'A')
+                    .replace(/[\u0392\u0412]/g, 'B')
+                    .replace(/[\u0421]/g, 'C')
+                    .replace(/[\u0395\u0415]/g, 'E');
 
                 const questionsMap = new Map();
 
@@ -352,27 +366,40 @@
                         content = content.replace(ansMatch[0], '');
                     }
 
-                    // Extract options A, B, C, D, E. 
-                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]|([A-E])[\)\.]|\[\[CORRECT_([A-E])[\)\.]?\]\][\)\.]?|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)(?=\s|$)/gi;
+                    // Extract options A, B, C, D, E using tracked fonts
+                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]?|\[\[CORRECT_([A-E])\]\](?:\s*[\.\)])?|\[\[OPT_([a-zA-Z0-9_.-]+)_([A-E])\]\](?:\s*[\.\)])?|([A-E])[\)\.]|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)(?=\s|$)/gi;
                     
                     let options = {};
                     let lastOpt = null;
                     let lastIdx = 0;
                     let firstOptIdx = -1;
                     
+                    let fontCounts = {};
+                    let letterToFont = {};
+                    
                     let optMatch;
                     while ((optMatch = optRegex.exec(content)) !== null) {
                         if (firstOptIdx === -1) firstOptIdx = optMatch.index;
                         
                         if (lastOpt) {
-                            options[lastOpt] = content.substring(lastIdx, optMatch.index).trim();
+                            let optText = content.substring(lastIdx, optMatch.index).trim();
+                            optText = optText.replace(/^[\.\)]\s*/, ''); // strip leftover leading dots
+                            options[lastOpt] = optText;
                         }
                         
                         let hasAsterisk = !!optMatch[1];
-                        lastOpt = (optMatch[2] || optMatch[3] || optMatch[4] || optMatch[5]).toUpperCase();
+                        let letter = (optMatch[2] || optMatch[3] || optMatch[5] || optMatch[6] || optMatch[7]).toUpperCase();
+                        let fontName = optMatch[4];
+                        
+                        if (fontName) {
+                            fontCounts[fontName] = (fontCounts[fontName] || 0) + 1;
+                            letterToFont[letter] = fontName;
+                        }
+                        
+                        lastOpt = letter;
                         lastIdx = optMatch.index + optMatch[0].length;
                         
-                        if (hasAsterisk || optMatch[4] || optMatch[5]) {
+                        if (hasAsterisk || optMatch[3] || optMatch[7]) {
                             correctAnswer = lastOpt;
                             hasExplicitAnswer = true;
                         }
@@ -381,6 +408,8 @@
                     let explanation = "";
                     if (lastOpt) {
                         let lastText = content.substring(lastIdx).trim();
+                        lastText = lastText.replace(/^[\.\)]\s*/, '');
+                        
                         // Strip metadata blocks
                         const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter|Student:)/i);
                         if (metaMatch) {
@@ -401,27 +430,52 @@
 
                     if (Object.keys(options).length >= 2) {
                         
-                        // Intelligent check: If we have an explanation but no explicitly marked answer,
-                        // check if one of the option texts is literally embedded in the explanation.
-                        if (!correctAnswer && explanation) {
-                            const expLower = explanation.toLowerCase();
-                            for (const [key, text] of Object.entries(options)) {
-                                const cleanOptText = text.toLowerCase().trim();
-                                if (cleanOptText.length > 2 && (expLower.includes(cleanOptText) || cleanOptText.includes(expLower))) {
-                                    correctAnswer = key;
-                                    hasExplicitAnswer = true;
-                                    break;
+                        // Heuristic 1: Unique internal PDF font detection (Isolates the bolded answer key)
+                        if (!hasExplicitAnswer && Object.keys(letterToFont).length > 1) {
+                            let uniqueFontLetters = [];
+                            for (const [letter, font] of Object.entries(letterToFont)) {
+                                if (fontCounts[font] === 1) {
+                                    uniqueFontLetters.push(letter);
                                 }
+                            }
+                            if (uniqueFontLetters.length === 1) {
+                                correctAnswer = uniqueFontLetters[0];
+                                hasExplicitAnswer = true;
+                            }
+                        }
+                        
+                        // Heuristic 2: Match explanation string to option text
+                        if (!hasExplicitAnswer && explanation) {
+                            const expLower = explanation.toLowerCase().trim();
+                            let bestMatch = null;
+                            let maxLen = 0;
+                            
+                            for (const [key, text] of Object.entries(options)) {
+                                const cleanOptText = text.toLowerCase().trim().replace(/[\.\)]$/, '').trim();
+                                if (cleanOptText.length < 1) continue;
+                                
+                                if (expLower.includes(cleanOptText) || cleanOptText.includes(expLower)) {
+                                    if (cleanOptText.length > maxLen) {
+                                        bestMatch = key;
+                                        maxLen = cleanOptText.length;
+                                    }
+                                }
+                            }
+                            if (bestMatch && (maxLen > 1 || expLower === options[bestMatch].toLowerCase().trim())) {
+                                correctAnswer = bestMatch;
+                                hasExplicitAnswer = true;
                             }
                         }
 
                         // Preserve previous answer if we didn't find a new explicit one (prevents the Key from resetting it)
+                        if (!hasExplicitAnswer && questionsMap.has(qNum)) {
+                            correctAnswer = questionsMap.get(qNum).correctAnswer;
+                            hasExplicitAnswer = true;
+                        }
+
+                        // Fallback
                         if (!correctAnswer) {
-                            if (questionsMap.has(qNum)) {
-                                correctAnswer = questionsMap.get(qNum).correctAnswer;
-                            } else {
-                                correctAnswer = 'A'; // Last resort fallback
-                            }
+                            correctAnswer = 'A';
                         }
 
                         // Overwrite map if we found a new explicit answer, or if it's the first time we see this question
