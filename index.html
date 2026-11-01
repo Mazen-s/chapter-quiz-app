@@ -98,3 +98,326 @@ const LS = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch { return d; } },
   set(k, v) {
     try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+    catch { if (!warned) { warned = true; toast('Couldn’t save to this browser. Progress won’t be kept.', 'warn'); } return false; }
+  },
+  del(k) { try { localStorage.removeItem(k); } catch {} }
+};
+let lib = LS.get('tbq_lib', []);
+const saveLib = () => LS.set('tbq_lib', lib);
+
+/* ---------- PDF text extraction ---------- */
+async function extractText(buf) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let out = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const items = (await (await pdf.getPage(p)).getTextContent()).items;
+    let lastY = null, lastEnd = null;
+    for (const it of items) {
+      if (!it.str && !it.hasEOL) continue;
+      const x = it.transform[4], y = it.transform[5];
+      if (lastY !== null && Math.abs(y - lastY) > 2) { out += '\n'; lastEnd = null; }
+      else if (lastEnd !== null && x - lastEnd > 1 && !/\s$/.test(out) && !/^\s/.test(it.str)) out += ' ';
+      out += it.str;
+      if (it.hasEOL) { out += '\n'; lastEnd = null; } else lastEnd = x + (it.width || 0);
+      lastY = y;
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+/* ---------- Regex parsing ---------- */
+const norm = s => s.replace(/\s+/g, ' ').trim();
+
+function cleanLines(text) {
+  return text.split('\n')
+    .map(l => l.replace(/\.(\d{1,3}-\d{1,3})\s*$/, '.'))
+    .filter(l => !/^\s*Copyright ©/i.test(l) && !/^\s*\d{1,3}-\d{1,3}\s*$/.test(l))
+    .map(l => l.trim()).filter(Boolean);
+}
+
+function toBlocks(lines, stopAtAACSB) {
+  const blocks = []; let expected = 1, c = null;
+  for (const l of lines) {
+    const m = l.match(/^(\d{1,3})\.\s+\S/);
+    if (m && +m[1] === expected) { c = { num: expected++, lines: [l], done: false }; blocks.push(c); continue; }
+    if (!c || c.done) continue;
+    if (stopAtAACSB && /^AACSB:/.test(l)) { c.done = true; continue; }
+    c.lines.push(l);
+  }
+  return blocks;
+}
+
+function parseQuestion(block) {
+  let stem = '', opts = [], target = 'stem', next = 'A';
+  block.lines.forEach((l, i) => {
+    if (i === 0) l = l.replace(/^\d+\.\s*/, '');
+    const m = l.match(/^([A-E])\.\s+(.*)$/);
+    if (m && m[1] === next) { opts.push({ letter: m[1], text: m[2] }); next = String.fromCharCode(next.charCodeAt(0) + 1); target = 'opt'; }
+    else if (target === 'stem') stem += ' ' + l;
+    else opts[opts.length - 1].text += ' ' + l;
+  });
+  return { num: block.num, stem: norm(stem), options: opts.map(o => ({ letter: o.letter, text: norm(o.text) })), answerText: null };
+}
+
+function extractAnswer(block, q) {
+  let t = norm(block.lines.join(' ').replace(/^\d+\.\s*/, ''));
+  const rm = s => {
+    s = norm(s); if (!s) return;
+    const i = t.toLowerCase().indexOf(s.toLowerCase());
+    if (i >= 0) t = norm(t.slice(0, i) + ' ' + t.slice(i + s.length));
+  };
+  rm(q.stem);
+  q.options.forEach(o => { const before = t; rm(o.letter + '. ' + o.text); if (t === before) rm(o.text); });
+  return t || null;
+}
+
+function parseBank(text) {
+  const keyRe = /Test Bank\s*[-–—]\s*Static\s*Key/gi;
+  let keyIdx = -1, m;
+  while ((m = keyRe.exec(text))) keyIdx = m.index;
+  const qText = keyIdx >= 0 ? text.slice(0, keyIdx) : text;
+  let kText = keyIdx >= 0 ? text.slice(keyIdx) : '';
+  const sum = kText.search(/Test Bank\s*[-–—]\s*Static\s*Summary/i);
+  if (sum >= 0) kText = kText.slice(0, sum);
+  const qs = toBlocks(cleanLines(qText), false).map(parseQuestion).filter(q => q.options.length >= 2);
+  const kBlocks = toBlocks(cleanLines(kText), true);
+  qs.forEach(q => { const kb = kBlocks.find(b => b.num === q.num); if (kb) q.answerText = extractAnswer(kb, q); });
+  if (!kText) toast('No “Static Key” section found. Answers will be unavailable.', 'warn');
+  return qs;
+}
+
+/* ---------- Answer matching ---------- */
+const STOP = new Set(['the', 'a', 'an', 'of', 'to', 'is', 'are', 'and', 'or', 'in', 'as', 'be', 'by', 'that', 'for']);
+const stm = w => (w.length > 4 && /[a-z]$/.test(w)) ? w.replace(/(ing|ed|es|s)$/, '') : w;
+const toks = s => (s.toLowerCase().match(/\d+(?:\.\d+)?|[a-z]+/g) || []).filter(w => !STOP.has(w)).map(stm);
+const bigrams = t => { const m = new Map(); for (let i = 1; i < t.length; i++) { const k = t[i - 1] + ' ' + t[i]; m.set(k, (m.get(k) || 0) + 1); } return m; };
+function dice(a, b) {
+  const A = bigrams(a), B = bigrams(b); let hit = 0, na = 0, nb = 0;
+  A.forEach((v, k) => { na += v; hit += Math.min(v, B.get(k) || 0); }); B.forEach(v => nb += v);
+  return na + nb ? 2 * hit / (na + nb) : 0;
+}
+function filled(stem, opt) {
+  const blanks = stem.match(/_{2,}/g);
+  if (!blanks) return stem + ' ' + opt;
+  const segs = opt.split(/\s*;\s*/);
+  if (segs.length === blanks.length) { let i = 0; return stem.replace(/_{2,}/g, () => segs[i++]); }
+  return blanks.length === 1 ? stem.replace(/_{2,}/, opt) : stem + ' ' + opt;
+}
+function bestMatch(answer, optTexts, stem) {
+  const at = toks(answer), aj = ' ' + at.join(' ') + ' ';
+  const isAll = t => /^all of the (options|above)/i.test(t), isNone = t => /^none of the/i.test(t);
+  const meta = optTexts.map(t => isAll(t) || isNone(t));
+  const contig = optTexts.map((t, i) => !meta[i] && toks(t).length > 0 && aj.includes(' ' + toks(t).join(' ') + ' '));
+  if (contig.filter(Boolean).length >= 2) {
+    let i = optTexts.findIndex(isAll); if (i < 0) i = optTexts.findIndex(isNone);
+    if (i >= 0) return { idx: i, score: 1 };
+  }
+  const aset = new Set(at);
+  let best = { idx: -1, score: 0 };
+  optTexts.forEach((t, i) => {
+    if (meta[i]) return;
+    const ot = toks(t); if (!ot.length) return;
+    const cont = ot.filter(w => aset.has(w)).length / ot.length;
+    const s = 0.6 * cont + 0.4 * dice(toks(filled(stem, t)), at) + (contig[i] ? 0.2 : 0);
+    if (s > best.score) best = { idx: i, score: s };
+  });
+  return best.score < 0.35 ? { idx: -1, score: best.score } : best;
+}
+
+/* ---------- Stats ---------- */
+// ans[num] = { sel: chosen option index, shown: answer revealed, idx: correct option index }
+function stats(qs, ans) {
+  const s = { correct: 0, incorrect: 0, skipped: 0, unchecked: 0 };
+  qs.forEach(q => {
+    const a = ans[q.num] || {};
+    if (!a.shown || a.idx == null || a.idx < 0) s.unchecked++;
+    else if (a.sel == null) s.skipped++;
+    else if (a.sel === a.idx) s.correct++;
+    else s.incorrect++;
+  });
+  return s;
+}
+const fmt = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+
+/* ---------- Views ---------- */
+const view = v => ['lib', 'quiz', 'summary'].forEach(x => $(x).classList.toggle('hidden', x !== v));
+let item = null, Q = [], P = null, cur = 0, tick = null, running = false, startedAt = 0;
+
+function renderLib() {
+  const el = $('list'); el.innerHTML = '';
+  if (!lib.length) { el.innerHTML = '<p class="text-slate-400 text-sm py-3">No saved quizzes yet. Add a PDF above.</p>'; return; }
+  lib.forEach(it => {
+    const p = LS.get('tbq_p_' + it.id, null), n = it.questions.length;
+    const s = p ? stats(it.questions, p.ans) : null;
+    const checked = s ? n - s.unchecked : 0;
+    const row = document.createElement('div');
+    row.className = 'bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-wrap items-center gap-3';
+    row.innerHTML = '<div class="flex-1 min-w-0"><p class="font-medium truncate">' + esc(it.name) + '</p><p class="text-sm text-slate-400">' +
+      n + ' questions' + (s && checked ? ' · ' + checked + ' checked, ' + s.correct + ' correct · ' + fmt(p.elapsed || 0) : '') + '</p></div>' +
+      '<button data-a="go" class="px-3 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 font-medium">' + (checked ? 'Resume' : 'Start') + '</button>' +
+      (checked ? '<button data-a="sum" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600">Summary</button>' : '') +
+      (p ? '<button data-a="reset" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600">Restart</button>' : '') +
+      '<button data-a="del" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-red-900">Delete</button>';
+    row.querySelectorAll('button').forEach(b => b.onclick = () => {
+      const a = b.dataset.a;
+      if (a === 'go') openQuiz(it.id);
+      if (a === 'sum') { load(it.id); showSummary(); }
+      if (a === 'reset' && confirm('Clear progress for “' + it.name + '”?')) { LS.del('tbq_p_' + it.id); renderLib(); }
+      if (a === 'del' && confirm('Delete “' + it.name + '” and its progress?')) { lib = lib.filter(x => x.id !== it.id); LS.del('tbq_p_' + it.id); saveLib(); renderLib(); }
+    });
+    el.appendChild(row);
+  });
+}
+
+function load(id) {
+  item = lib.find(x => x.id === id); Q = item.questions;
+  P = LS.get('tbq_p_' + id, null) || { cur: 0, ans: {}, elapsed: 0 };
+  cur = Math.min(P.cur || 0, Q.length - 1);
+}
+
+/* ---------- Timer + saving ---------- */
+const elapsedNow = () => (P.elapsed || 0) + (running ? Math.floor((Date.now() - startedAt) / 1000) : 0);
+function save() {
+  if (!P) return;
+  if (running) { P.elapsed = elapsedNow(); startedAt = Date.now(); }
+  P.cur = cur; LS.set('tbq_p_' + item.id, P);
+}
+function startTimer() {
+  running = true; startedAt = Date.now(); clearInterval(tick);
+  tick = setInterval(() => $('timer').textContent = fmt(elapsedNow()), 500);
+  $('timer').textContent = fmt(elapsedNow());
+}
+function stopTimer() { save(); running = false; clearInterval(tick); }
+window.addEventListener('beforeunload', () => { if (P && item) save(); });
+
+/* ---------- Quiz ---------- */
+const BASE = 'w-full text-left rounded-lg border px-4 py-3 flex gap-3 transition-colors ';
+const IDLE = 'border-slate-600 bg-slate-900/40 hover:border-indigo-400';
+
+function openQuiz(id) {
+  load(id); view('quiz');
+  $('qname').textContent = item.name;
+  build(); startTimer();
+  const missing = Q.filter(q => !q.answerText).map(q => q.num);
+  if (missing.length) toast('No answer key found for question' + (missing.length > 1 ? 's ' : ' ') + missing.slice(0, 8).join(', ') + (missing.length > 8 ? '…' : '') + '.', 'warn');
+}
+
+function build() {
+  const q = Q[cur];
+  $('progress').textContent = 'Question ' + (cur + 1) + ' of ' + Q.length;
+  $('bar').style.width = (cur / Q.length * 100) + '%';
+  $('stem').textContent = q.num + '. ' + q.stem;
+  $('options').innerHTML = '';
+  q.options.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = '<span class="font-semibold text-slate-400"></span><span class="opt-text"></span>';
+    b.children[0].textContent = o.letter + '.'; b.children[1].textContent = o.text;
+    b.onclick = () => select(i);
+    $('options').appendChild(b);
+  });
+  $('prev').disabled = cur === 0; $('prev').classList.toggle('opacity-50', cur === 0);
+  $('next').textContent = cur === Q.length - 1 ? 'Finish' : 'Next question';
+  paint();
+}
+
+function paint() {
+  const a = P.ans[Q[cur].num] || {};
+  [...$('options').children].forEach((b, i) => {
+    if (a.shown) {
+      b.className = BASE + 'cursor-default ' + (i === a.idx ? 'border-green-500 bg-green-600/25' : i === a.sel ? 'border-red-500 bg-red-600/20' : 'border-slate-700 opacity-60');
+    } else b.className = BASE + (i === a.sel ? 'border-indigo-400 bg-indigo-500/20' : IDLE);
+  });
+  $('show').textContent = a.shown ? 'Undo answer' : 'Show answer';
+  $('show').className = 'px-4 py-2 rounded-lg font-medium ' + (a.shown ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-500 hover:bg-indigo-400');
+  $('score').textContent = stats(Q, P.ans).correct;
+}
+
+function select(i) {
+  const q = Q[cur], a = P.ans[q.num] || (P.ans[q.num] = {});
+  if (a.shown) return;
+  a.sel = i; paint(); save();
+}
+
+$('show').onclick = () => {
+  const q = Q[cur], a = P.ans[q.num] || (P.ans[q.num] = {});
+  if (a.shown) { a.shown = false; delete a.idx; paint(); save(); return; }  // undo
+  if (!q.answerText) { toast('No answer key found for question ' + q.num + '.'); return; }
+  const texts = [...$('options').children].map(b => b.querySelector('.opt-text').textContent);
+  const { idx } = bestMatch(q.answerText, texts, q.stem);
+  a.shown = true; a.idx = idx;
+  if (idx < 0) toast('Couldn’t find the option text for question ' + q.num + ' in the key.');
+  paint(); save();
+};
+
+function go(n) { cur = n; build(); save(); }
+$('prev').onclick = () => { if (cur > 0) go(cur - 1); };
+$('next').onclick = () => { if (cur < Q.length - 1) go(cur + 1); else { stopTimer(); showSummary(true); } };
+$('exit').onclick = () => { stopTimer(); renderLib(); view('lib'); toast('Progress saved.', 'ok'); };
+$('sumBtn').onclick = () => { stopTimer(); showSummary(); };
+
+/* ---------- Summary ---------- */
+function showSummary(done) {
+  const s = stats(Q, P.ans), judged = s.correct + s.incorrect;
+  const pct = judged ? Math.round(s.correct / judged * 100) + '%' : '–';
+  $('sumTitle').textContent = item.name;
+  $('sumLine').textContent = (done ? 'Quiz finished. ' : '') + 'Accuracy ' + pct + ' on ' + judged + ' checked answer' + (judged === 1 ? '' : 's') + ' · time ' + fmt(P.elapsed || 0);
+  const box = (label, val, cls) => '<div class="rounded-lg bg-slate-900/50 border border-slate-700 p-3"><p class="text-2xl font-semibold ' + cls + '">' + val + '</p><p class="text-xs text-slate-400">' + label + '</p></div>';
+  $('sumStats').innerHTML = box('Correct', s.correct, 'text-green-400') + box('Incorrect', s.incorrect, 'text-red-400') + box('Revealed, no pick', s.skipped, 'text-amber-400') + box('Not checked', s.unchecked, 'text-slate-300');
+  $('chips').innerHTML = '';
+  const missed = [];
+  Q.forEach((q, i) => {
+    const a = P.ans[q.num] || {};
+    let cls = 'bg-slate-700 text-slate-300';
+    if (a.shown && a.idx >= 0) {
+      if (a.sel == null) cls = 'bg-amber-600 text-white';
+      else if (a.sel === a.idx) cls = 'bg-green-600 text-white';
+      else { cls = 'bg-red-600 text-white'; missed.push({ q, a }); }
+    }
+    const c = document.createElement('button');
+    c.className = 'w-9 h-9 rounded-md text-sm font-medium ' + cls; c.textContent = q.num;
+    c.onclick = () => { P.cur = i; save(); openQuiz(item.id); };
+    $('chips').appendChild(c);
+  });
+  $('missed').innerHTML = missed.length ? missed.map(({ q, a }) =>
+    '<div class="border-l-2 border-red-500 pl-3"><p class="text-slate-200">' + q.num + '. ' + esc(q.stem) + '</p>' +
+    '<p class="text-red-300 mt-1">Your answer: ' + esc(q.options[a.sel].letter + '. ' + q.options[a.sel].text) + '</p>' +
+    '<p class="text-green-300">Correct: ' + esc(q.options[a.idx].letter + '. ' + q.options[a.idx].text) + '</p></div>').join('')
+    : '<p class="text-slate-400">' + (judged ? 'No missed questions so far.' : 'Check some answers to see what you missed.') + '</p>';
+  view('summary');
+}
+$('sumBack').onclick = () => openQuiz(item.id);
+$('sumRestart').onclick = () => { if (confirm('Clear all progress for this quiz and start over?')) { LS.del('tbq_p_' + item.id); openQuiz(item.id); } };
+$('sumLib').onclick = () => { renderLib(); view('lib'); };
+
+/* ---------- File handling ---------- */
+async function handleFile(f) {
+  if (!f) return;
+  if (typeof pdfjsLib === 'undefined') { toast('pdf.js failed to load. Check your connection and reload.'); return; }
+  $('status').textContent = 'Reading PDF…';
+  try {
+    const qs = parseBank(await extractText(await f.arrayBuffer()));
+    $('status').textContent = '';
+    if (!qs.length) { toast('No questions found. Questions need to look like “1. Question text” with “A. Option” lines.'); return; }
+    const name = f.name.replace(/\.pdf$/i, '');
+    const old = lib.find(x => x.name === name);
+    if (old) { LS.del('tbq_p_' + old.id); lib = lib.filter(x => x !== old); }
+    lib.push({ id: Date.now().toString(36), name, questions: qs });
+    if (saveLib()) toast('Saved “' + name + '” (' + qs.length + ' questions).', 'ok');
+    renderLib();
+  } catch (e) {
+    $('status').textContent = '';
+    toast('Couldn’t read that PDF: ' + (e.message || e));
+  }
+  $('file').value = '';
+}
+$('file').onchange = e => handleFile(e.target.files[0]);
+['dragover', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => {
+  e.preventDefault(); if (ev === 'drop') handleFile(e.dataTransfer.files[0]);
+}));
+
+renderLib();
+</script>
+</body>
+</html>
