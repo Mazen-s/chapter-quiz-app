@@ -1,1049 +1,284 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chapter Quiz Generator</title>
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#2563eb', // Blue-600
-                        primaryHover: '#1d4ed8', // Blue-700
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        
-        /* Custom scrollbar for results view */
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #f1f1f1; 
-            border-radius: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #cbd5e1; 
-            border-radius: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8; 
-        }
-
-        .fade-in {
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #2563eb;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Test Bank Quiz</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{background:#0f172a;font-family:Georgia,'Iowan Old Style','Times New Roman',serif}
+.ui{font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+</style>
 </head>
-<body class="text-gray-800 dark:text-gray-200 bg-gray-100 dark:bg-gray-900 antialiased min-h-screen flex flex-col transition-colors duration-200">
-
-    <header class="bg-white dark:bg-gray-800 shadow-sm sticky top-0 z-10 transition-colors duration-200">
-        <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
-            <h1 class="text-2xl font-bold text-primary dark:text-blue-400 flex items-center gap-2 cursor-pointer" onclick="app.goHome()">
-                <i class="fa-solid fa-graduation-cap"></i> QuizGen
-            </h1>
-            <div id="header-actions" class="flex items-center gap-4">
-                <button onclick="app.toggleTheme()" class="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition-colors" title="Toggle Dark Mode">
-                    <i id="theme-icon" class="fa-solid fa-moon text-xl"></i>
-                </button>
-            </div>
-        </div>
-    </header>
-
-    <main class="flex-grow max-w-4xl mx-auto w-full px-4 py-8 relative">
-        
-        <div id="view-home" class="view-section block fade-in">
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-8 mb-8 text-center transition-colors duration-200">
-                <h2 class="text-3xl font-bold mb-4 text-gray-800 dark:text-white">Generate a Quiz from PDF</h2>
-                <p class="text-gray-600 dark:text-gray-300 mb-8 max-w-lg mx-auto">Upload a chapter PDF containing multiple-choice questions. We'll extract them instantly for you to practice.</p>
-                
-                <div class="max-w-md mx-auto">
-                    <label for="pdf-upload" class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-primary/50 dark:border-primary/30 rounded-xl cursor-pointer bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
-                            <i class="fa-solid fa-cloud-arrow-up text-4xl text-primary dark:text-blue-400 mb-3"></i>
-                            <p class="mb-2 text-sm text-gray-700 dark:text-gray-300"><span class="font-semibold">Click to upload</span> or drag and drop</p>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">PDF files only</p>
-                        </div>
-                        <input id="pdf-upload" type="file" class="hidden" accept="application/pdf" onchange="app.handleFileUpload(event)" />
-                    </label>
-                </div>
-                
-                <div id="upload-status" class="mt-6 hidden flex flex-col items-center">
-                    <div class="loader mb-3 border-gray-200 dark:border-gray-700 border-top-primary"></div>
-                    <p id="upload-status-text" class="text-primary dark:text-blue-400 font-medium">Parsing PDF...</p>
-                </div>
-            </div>
-
-            <div>
-                <h3 class="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800 dark:text-white"><i class="fa-solid fa-bookmark text-gray-400 dark:text-gray-500"></i> Saved Quizzes</h3>
-                <div id="saved-quizzes-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- Saved quizzes populated here -->
-                </div>
-                <div id="no-quizzes-msg" class="text-gray-500 dark:text-gray-400 text-center py-8 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 hidden transition-colors duration-200">
-                    No saved quizzes yet. Upload a PDF to get started!
-                </div>
-            </div>
-        </div>
-
-        <div id="view-quiz" class="view-section hidden fade-in max-w-3xl mx-auto">
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 md:p-8 transition-colors duration-200">
-                
-                <!-- Quiz Header & Progress -->
-                <div class="mb-6">
-                    <div class="flex justify-between items-end mb-2">
-                        <div class="flex items-center gap-2 pr-4 overflow-hidden">
-                            <h2 id="quiz-title" class="text-xl font-bold text-gray-800 dark:text-white truncate">Quiz Title</h2>
-                            <button onclick="app.renameActiveQuiz()" class="text-gray-400 hover:text-primary transition-colors flex-shrink-0" title="Rename Quiz"><i class="fa-solid fa-pencil text-sm"></i></button>
-                        </div>
-                        <div class="flex items-center gap-4">
-                            <span id="quiz-timer" class="text-sm font-mono font-bold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-md">00:00</span>
-                            <span id="quiz-progress-text" class="text-sm font-semibold text-primary dark:text-blue-400 whitespace-nowrap">Question 1 of 10</span>
-                            <button onclick="app.resetQuiz()" class="text-gray-400 hover:text-amber-500 transition-colors flex-shrink-0" title="Reset Progress"><i class="fa-solid fa-rotate-left"></i></button>
-                            <button onclick="app.goHome()" class="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0" title="Exit Quiz"><i class="fa-solid fa-xmark text-lg"></i></button>
-                        </div>
-                    </div>
-                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
-                        <div id="quiz-progress-bar" class="bg-primary dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300" style="width: 10%"></div>
-                    </div>
-                </div>
-
-                <!-- Question Area -->
-                <div class="mb-8 min-h-[200px]">
-                    <h3 id="question-text" class="text-lg font-medium text-gray-800 dark:text-gray-100 mb-6 leading-relaxed">
-                        <!-- Question text inserted here -->
-                    </h3>
-                    <div id="options-container" class="space-y-3">
-                        <!-- Options generated here -->
-                    </div>
-                </div>
-
-                <!-- Navigation Footer -->
-                <div class="flex flex-col sm:flex-row justify-between items-center gap-4 pt-6 border-t border-gray-100 dark:border-gray-700">
-                    <button id="btn-prev" class="w-full sm:w-auto px-5 py-2.5 rounded-lg font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" onclick="app.prevQuestion()">
-                        <i class="fa-solid fa-chevron-left mr-1"></i> Previous
-                    </button>
-                    
-                    <button id="btn-show-answer" class="w-full sm:w-auto px-5 py-2.5 rounded-lg font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors" onclick="app.toggleAnswer()">
-                        <i class="fa-regular fa-eye mr-1"></i> Show Answer
-                    </button>
-                    
-                    <button id="btn-next" class="w-full sm:w-auto px-5 py-2.5 rounded-lg font-medium text-white bg-primary dark:bg-blue-600 hover:bg-primaryHover dark:hover:bg-blue-700 transition-colors shadow-sm" onclick="app.nextQuestion()">
-                        Next <i class="fa-solid fa-chevron-right ml-1"></i>
-                    </button>
-                    
-                    <button id="btn-submit" class="hidden w-full sm:w-auto px-5 py-2.5 rounded-lg font-bold text-white bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 transition-colors shadow-sm" onclick="app.submitQuiz()">
-                        Submit <i class="fa-solid fa-check-double ml-1"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <div id="view-results" class="view-section hidden fade-in max-w-3xl mx-auto">
-            
-            <!-- Score Summary Card -->
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-8 text-center mb-6 transition-colors duration-200">
-                <h2 class="text-2xl font-bold text-gray-800 dark:text-white mb-2">Quiz Results</h2>
-                <h3 id="results-quiz-title" class="text-gray-500 dark:text-gray-400 mb-6">Quiz Title</h3>
-                
-                <div class="relative w-40 h-40 mx-auto mb-6">
-                    <svg class="w-full h-full" viewBox="0 0 36 36">
-                        <path class="text-gray-200 dark:text-gray-700" stroke-width="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                        <path id="score-circle" class="text-primary dark:text-blue-500" stroke-width="3" stroke-dasharray="100, 100" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                    </svg>
-                    <div class="absolute inset-0 flex flex-col items-center justify-center">
-                        <span id="score-percentage" class="text-4xl font-bold text-gray-800 dark:text-white">0%</span>
-                        <span id="score-fraction" class="text-sm text-gray-500 dark:text-gray-400">0/0</span>
-                    </div>
-                </div>
-                
-                <p id="results-time-taken" class="text-gray-600 dark:text-gray-300 mb-6 font-medium">Time Taken: 00:00</p>
-                
-                <div class="flex justify-center gap-4">
-                    <button class="px-6 py-2.5 rounded-lg font-medium text-white bg-primary dark:bg-blue-600 hover:bg-primaryHover dark:hover:bg-blue-700 transition-colors shadow-sm" onclick="app.redoQuiz()">
-                        <i class="fa-solid fa-rotate-right mr-1"></i> Redo Quiz
-                    </button>
-                    <button class="px-6 py-2.5 rounded-lg font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" onclick="app.goHome()">
-                        Back to Home
-                    </button>
-                </div>
-            </div>
-
-            <!-- Past Attempts Section -->
-            <div id="attempts-section" class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 md:p-8 mb-6 transition-colors duration-200 hidden">
-                <h3 class="text-xl font-bold mb-4 text-gray-800 dark:text-white border-b border-gray-100 dark:border-gray-700 pb-2">Past Attempts</h3>
-                <div id="attempts-list" class="flex flex-wrap gap-2">
-                    <!-- Attempt buttons generated here -->
-                </div>
-            </div>
-
-            <!-- Detailed Review List -->
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 md:p-8 transition-colors duration-200">
-                <h3 class="text-xl font-bold mb-6 text-gray-800 dark:text-white border-b dark:border-gray-700 pb-2">Detailed Review</h3>
-                <div id="results-list" class="space-y-8 custom-scrollbar">
-                    <!-- Review items generated here -->
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <script>
-        // Configure PDF.js worker
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-
-        // Application State
-        const state = {
-            currentView: 'home', // 'home', 'quiz', 'results'
-            savedQuizzes: [],
-            activeQuiz: null,
-            currentIndex: 0,
-            userAnswers: {}, // key: question index, value: selected option ('A', 'B', etc.)
-            revealedAnswers: {}, // key: question index, value: boolean
-            isDarkMode: false,
-            timerInterval: null,
-            elapsedTime: 0
-        };
-
-        const utils = {
-            generateId: () => Date.now().toString(36) + Math.random().toString(36).substr(2),
-            formatTime: (seconds) => {
-                const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-                const s = (seconds % 60).toString().padStart(2, '0');
-                return `${m}:${s}`;
-            },
-            escapeHTML: (str) => {
-                if (!str) return '';
-                return str.replace(/[&<>'"]/g, 
-                    tag => ({
-                        '&': '&amp;',
-                        '<': '&lt;',
-                        '>': '&gt;',
-                        "'": '&#39;',
-                        '"': '&quot;'
-                    }[tag] || tag)
-                );
-            },
-            saveToStorage: () => {
-                localStorage.setItem('quizGen_data', JSON.stringify(state.savedQuizzes));
-            },
-            loadFromStorage: () => {
-                const data = localStorage.getItem('quizGen_data');
-                if (data) {
-                    try {
-                        state.savedQuizzes = JSON.parse(data);
-                    } catch (e) {
-                        console.error("Failed to parse saved quizzes", e);
-                        state.savedQuizzes = [];
-                    }
-                }
-            }
-        };
-
-        const parser = {
-            extractTextFromPDF: async (file) => {
-                const arrayBuffer = await file.arrayBuffer();
-                const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-                const pdf = await loadingTask.promise;
-                let fullText = '';
-
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    
-                    let pageStr = '';
-                    let lastY = -1;
-                    
-                    // Reconstruct line breaks using the Y-coordinates of the text elements
-                    textContent.items.forEach(item => {
-                        if (!item.transform) return;
-                        
-                        const currentY = Math.round(item.transform[5]);
-                        let str = item.str;
-
-                        // Smart Test Bank Answer Detection: Track fonts to isolate bold keys
-                        const cleanStr = str.trim();
-                        if (/^[A-E][\.\)]?$/.test(cleanStr) || /^[A-E]$/.test(cleanStr)) {
-                            const letterMatch = cleanStr.match(/[A-E\u0391-\u0395\u0410-\u0415\u0421]/);
-                            if (letterMatch) {
-                                let letter = letterMatch[0]
-                                    .replace(/[\u0391\u0410]/, 'A')
-                                    .replace(/[\u0392\u0412]/, 'B')
-                                    .replace(/[\u0421]/, 'C')
-                                    .replace(/[\u0395\u0415]/, 'E');
-
-                                if (['A','B','C','D','E'].includes(letter)) {
-                                    if (item.fontName && item.fontName.toLowerCase().includes('bold')) {
-                                        str = str.replace(letterMatch[0], `[[CORRECT_${letter}]]`);
-                                    } else {
-                                        const fName = item.fontName || 'unknown';
-                                        str = str.replace(letterMatch[0], `[[OPT_${fName}_${letter}]]`);
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // If the Y coordinate changes by more than 4 points, treat it as a new line
-                        if (lastY !== -1 && Math.abs(lastY - currentY) > 4) {
-                            pageStr += '\n';
-                        } else if (lastY !== -1 && !pageStr.endsWith(' ') && !str.startsWith(' ')) {
-                            pageStr += ' ';
-                        }
-                        pageStr += str;
-                        lastY = currentY;
-                    });
-                    
-                    fullText += pageStr + '\n\n';
-                }
-                return fullText;
-            },
-            
-            parseQuestions: (rawText) => {
-                // Pre-clean common PDF artifacts
-                let cleanText = rawText
-                    .replace(/\[Page \d+\]/gi, '')
-                    .replace(/Made with Goodnotes/gi, '');
-                    
-                // Normalize Greek/Cyrillic lookalikes to ASCII letters
-                cleanText = cleanText
-                    .replace(/[\u0391\u0410]/g, 'A')
-                    .replace(/[\u0392\u0412]/g, 'B')
-                    .replace(/[\u0421]/g, 'C')
-                    .replace(/[\u0395\u0415]/g, 'E');
-
-                const questionsMap = new Map();
-
-                // Split the text strictly by question numbers at the start of lines to prevent missing questions
-                const parts = cleanText.split(/(?:^|\n)\s*(\d+)[\)\.]\s+/);
-                
-                for (let i = 1; i < parts.length; i += 2) {
-                    const qNum = parts[i].trim();
-                    let content = parts[i + 1].trim();
-                    
-                    let correctAnswer = null; 
-                    let hasExplicitAnswer = false;
-                    
-                    // Try Format 1: "Answer: A"
-                    const ansMatch = content.match(/Answer:\s*([A-E])/i);
-                    if (ansMatch) {
-                        correctAnswer = ansMatch[1].toUpperCase();
-                        hasExplicitAnswer = true;
-                        content = content.replace(ansMatch[0], '');
-                    }
-
-                    // Extract options A, B, C, D, E using tracked fonts
-                    const optRegex = /(?:^|\n|\s+)(?:(\*)\s*([A-E])[\)\.]?|\[\[CORRECT_([A-E])\]\](?:\s*[\.\)])?|\[\[OPT_([a-zA-Z0-9_.-]+)_([A-E])\]\](?:\s*[\.\)])?|([A-E])[\)\.]|\$?\\underline\{([A-E])\}[^a-zA-Z\s]*)(?=\s|$)/gi;
-                    
-                    let options = {};
-                    let lastOpt = null;
-                    let lastIdx = 0;
-                    let firstOptIdx = -1;
-                    
-                    let fontCounts = {};
-                    let letterToFont = {};
-                    
-                    let optMatch;
-                    while ((optMatch = optRegex.exec(content)) !== null) {
-                        if (firstOptIdx === -1) firstOptIdx = optMatch.index;
-                        
-                        if (lastOpt) {
-                            let optText = content.substring(lastIdx, optMatch.index).trim();
-                            optText = optText.replace(/^[\.\)]\s*/, ''); // strip leftover leading dots
-                            options[lastOpt] = optText;
-                        }
-                        
-                        let hasAsterisk = !!optMatch[1];
-                        let letter = (optMatch[2] || optMatch[3] || optMatch[5] || optMatch[6] || optMatch[7]).toUpperCase();
-                        let fontName = optMatch[4];
-                        
-                        if (fontName) {
-                            fontCounts[fontName] = (fontCounts[fontName] || 0) + 1;
-                            letterToFont[letter] = fontName;
-                        }
-                        
-                        lastOpt = letter;
-                        lastIdx = optMatch.index + optMatch[0].length;
-                        
-                        if (hasAsterisk || optMatch[3] || optMatch[7]) {
-                            correctAnswer = lastOpt;
-                            hasExplicitAnswer = true;
-                        }
-                    }
-                    
-                    let explanation = "";
-                    if (lastOpt) {
-                        let lastText = content.substring(lastIdx).trim();
-                        lastText = lastText.replace(/^[\.\)]\s*/, '');
-                        
-                        // Strip metadata blocks
-                        const metaMatch = lastText.match(/\n(?:AACSB|Difficulty|Learning Objective|Accessibility|Blooms|Topic|Multiple Choice|Chapter|Student:)/i);
-                        if (metaMatch) {
-                            lastText = lastText.substring(0, metaMatch.index).trim();
-                        }
-                        
-                        // Check if an explanation is attached to the bottom of the last option
-                        const lastTextParts = lastText.split(/\n/);
-                        if (lastTextParts.length > 1) {
-                            options[lastOpt] = lastTextParts[0].trim();
-                            explanation = lastTextParts.slice(1).join(' ').trim();
-                        } else {
-                            options[lastOpt] = lastText;
-                        }
-                    }
-
-                    const questionText = firstOptIdx !== -1 ? content.substring(0, firstOptIdx).trim() : content;
-
-                    if (Object.keys(options).length >= 2) {
-                        
-                        // Heuristic 1: Unique internal PDF font detection (Isolates the bolded answer key)
-                        if (!hasExplicitAnswer && Object.keys(letterToFont).length > 1) {
-                            let uniqueFontLetters = [];
-                            for (const [letter, font] of Object.entries(letterToFont)) {
-                                if (fontCounts[font] === 1) {
-                                    uniqueFontLetters.push(letter);
-                                }
-                            }
-                            if (uniqueFontLetters.length === 1) {
-                                correctAnswer = uniqueFontLetters[0];
-                                hasExplicitAnswer = true;
-                            }
-                        }
-                        
-                        // Heuristic 2: Match explanation string to option text
-                        if (!hasExplicitAnswer && explanation) {
-                            const expLower = explanation.toLowerCase().trim();
-                            let bestMatch = null;
-                            let maxLen = 0;
-                            
-                            for (const [key, text] of Object.entries(options)) {
-                                const cleanOptText = text.toLowerCase().trim().replace(/[\.\)]$/, '').trim();
-                                if (cleanOptText.length < 1) continue;
-                                
-                                if (expLower.includes(cleanOptText) || cleanOptText.includes(expLower)) {
-                                    if (cleanOptText.length > maxLen) {
-                                        bestMatch = key;
-                                        maxLen = cleanOptText.length;
-                                    }
-                                }
-                            }
-                            if (bestMatch && (maxLen > 1 || expLower === options[bestMatch].toLowerCase().trim())) {
-                                correctAnswer = bestMatch;
-                                hasExplicitAnswer = true;
-                            }
-                        }
-
-                        // Preserve previous answer if we didn't find a new explicit one (prevents the Key from resetting it)
-                        if (!hasExplicitAnswer && questionsMap.has(qNum)) {
-                            correctAnswer = questionsMap.get(qNum).correctAnswer;
-                            hasExplicitAnswer = true;
-                        }
-
-                        // Fallback
-                        if (!correctAnswer) {
-                            correctAnswer = 'A';
-                        }
-
-                        // Overwrite map if we found a new explicit answer, or if it's the first time we see this question
-                        if (!questionsMap.has(qNum) || hasExplicitAnswer) {
-                            questionsMap.set(qNum, {
-                                number: qNum,
-                                text: questionText,
-                                options: options,
-                                correctAnswer: correctAnswer
-                            });
-                        }
-                    }
-                }
-                
-                // Return sorted array based on true question integer order
-                return Array.from(questionsMap.values()).sort((a, b) => parseInt(a.number) - parseInt(b.number));
-            }
-        };
-
-        const app = {
-            init: () => {
-                utils.loadFromStorage();
-                
-                // Initialize theme
-                if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-                    document.documentElement.classList.add('dark');
-                    state.isDarkMode = true;
-                    document.getElementById('theme-icon').classList.replace('fa-moon', 'fa-sun');
-                } else {
-                    document.documentElement.classList.remove('dark');
-                    state.isDarkMode = false;
-                    document.getElementById('theme-icon').classList.replace('fa-sun', 'fa-moon');
-                }
-
-                app.renderHome();
-            },
-
-            toggleTheme: () => {
-                if (state.isDarkMode) {
-                    document.documentElement.classList.remove('dark');
-                    localStorage.theme = 'light';
-                    state.isDarkMode = false;
-                    document.getElementById('theme-icon').classList.replace('fa-sun', 'fa-moon');
-                } else {
-                    document.documentElement.classList.add('dark');
-                    localStorage.theme = 'dark';
-                    state.isDarkMode = true;
-                    document.getElementById('theme-icon').classList.replace('fa-moon', 'fa-sun');
-                }
-            },
-
-            switchView: (viewName) => {
-                document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
-                document.getElementById(`view-${viewName}`).classList.remove('hidden');
-                state.currentView = viewName;
-                window.scrollTo(0,0);
-            },
-
-            startTimer: () => {
-                app.stopTimer();
-                document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
-                state.timerInterval = setInterval(() => {
-                    state.elapsedTime++;
-                    document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
-                    // Save progress automatically every 5 seconds
-                    if (state.elapsedTime % 5 === 0) app.saveProgress();
-                }, 1000);
-            },
-
-            stopTimer: () => {
-                if (state.timerInterval) {
-                    clearInterval(state.timerInterval);
-                    state.timerInterval = null;
-                }
-            },
-
-            goHome: () => {
-                app.stopTimer();
-                state.activeQuiz = null;
-                app.renderHome();
-                app.switchView('home');
-            },
-
-            viewHistory: (id) => {
-                const quiz = state.savedQuizzes.find(q => q.id === id);
-                if (!quiz || !quiz.attempts || quiz.attempts.length === 0) return;
-                state.activeQuiz = quiz;
-                app.renderResults(); // Defaults to rendering the latest attempt
-                app.switchView('results');
-            },
-
-            saveProgress: () => {
-                if (state.activeQuiz) {
-                    const quiz = state.savedQuizzes.find(q => q.id === state.activeQuiz.id);
-                    if (quiz) {
-                        quiz.progress = {
-                            currentIndex: state.currentIndex,
-                            userAnswers: { ...state.userAnswers },
-                            revealedAnswers: { ...state.revealedAnswers },
-                            elapsedTime: state.elapsedTime
-                        };
-                        utils.saveToStorage();
-                    }
-                }
-            },
-
-            renameQuiz: (id) => {
-                const quiz = state.savedQuizzes.find(q => q.id === id);
-                if (!quiz) return;
-                const newName = prompt("Enter a new name for this quiz:", quiz.name);
-                if (newName && newName.trim() !== "") {
-                    quiz.name = newName.trim();
-                    utils.saveToStorage();
-                    app.renderHome();
-                }
-            },
-
-            renameActiveQuiz: () => {
-                if (!state.activeQuiz) return;
-                const newName = prompt("Enter a new name for this quiz:", state.activeQuiz.name);
-                if (newName && newName.trim() !== "") {
-                    state.activeQuiz.name = newName.trim();
-                    const quiz = state.savedQuizzes.find(q => q.id === state.activeQuiz.id);
-                    if (quiz) quiz.name = newName.trim();
-                    utils.saveToStorage();
-                    document.getElementById('quiz-title').textContent = newName.trim();
-                }
-            },
-
-            resetQuiz: () => {
-                if(confirm("Are you sure you want to reset your progress for this quiz?")) {
-                    app.resetQuizState();
-                    app.saveProgress();
-                    app.renderQuizUI();
-                    document.getElementById('quiz-timer').textContent = utils.formatTime(state.elapsedTime);
-                }
-            },
-
-            // --- HOME VIEW LOGIC ---
-            renderHome: () => {
-                const listContainer = document.getElementById('saved-quizzes-list');
-                const noMsg = document.getElementById('no-quizzes-msg');
-                const uploadInput = document.getElementById('pdf-upload');
-                
-                // Reset file input
-                uploadInput.value = '';
-                
-                listContainer.innerHTML = '';
-                if (state.savedQuizzes.length === 0) {
-                    listContainer.classList.add('hidden');
-                    noMsg.classList.remove('hidden');
-                } else {
-                    listContainer.classList.remove('hidden');
-                    noMsg.classList.add('hidden');
-                    
-                    state.savedQuizzes.forEach(quiz => {
-                        let progressText = `${quiz.questions.length} Questions`;
-                        let startBtnText = '<i class="fa-solid fa-play mr-1"></i> Start';
-                        
-                        if (quiz.progress && Object.keys(quiz.progress.userAnswers).length > 0) {
-                            const answered = Object.keys(quiz.progress.userAnswers).length;
-                            progressText = `${answered}/${quiz.questions.length} Answered`;
-                            startBtnText = '<i class="fa-solid fa-play mr-1"></i> Resume';
-                        } else if (quiz.attempts && quiz.attempts.length > 0) {
-                            const lastAttempt = quiz.attempts[quiz.attempts.length - 1];
-                            const pct = Math.round((lastAttempt.correctCount / lastAttempt.total) * 100);
-                            progressText = `${quiz.questions.length} Questions • Last Score: ${pct}%`;
-                        }
-
-                        let historyBtnHtml = '';
-                        if (quiz.attempts && quiz.attempts.length > 0) {
-                            historyBtnHtml = `
-                                <button class="px-4 py-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-lg transition-colors" onclick="app.viewHistory('${quiz.id}')" title="View Past Attempts">
-                                    <i class="fa-solid fa-clock-rotate-left"></i>
-                                </button>
-                            `;
-                        }
-
-                        const card = document.createElement('div');
-                        card.className = 'bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow duration-200';
-                        card.innerHTML = `
-                            <div>
-                                <h4 class="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1 flex items-center justify-between" title="${utils.escapeHTML(quiz.name)}">
-                                    <span class="truncate pr-2">${utils.escapeHTML(quiz.name)}</span>
-                                    <button class="text-gray-400 hover:text-primary transition-colors flex-shrink-0" onclick="app.renameQuiz('${quiz.id}')" title="Rename Quiz">
-                                        <i class="fa-solid fa-pencil text-sm"></i>
-                                    </button>
-                                </h4>
-                                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">${progressText} • Created ${new Date(quiz.createdAt).toLocaleDateString()}</p>
-                            </div>
-                            <div class="flex gap-2">
-                                <button class="flex-grow bg-blue-50 dark:bg-blue-900/30 text-primary dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-4 py-2 rounded-lg font-medium transition-colors" onclick="app.startQuiz('${quiz.id}')">
-                                    ${startBtnText}
-                                </button>
-                                ${historyBtnHtml}
-                                <button class="px-4 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors" onclick="app.deleteQuiz('${quiz.id}')" title="Delete Quiz">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
-                        `;
-                        listContainer.appendChild(card);
-                    });
-                }
-            },
-
-            handleFileUpload: async (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-
-                const statusDiv = document.getElementById('upload-status');
-                const statusText = document.getElementById('upload-status-text');
-                
-                statusDiv.classList.remove('hidden');
-                statusText.textContent = "Extracting text from PDF...";
-
-                try {
-                    const rawText = await parser.extractTextFromPDF(file);
-                    
-                    statusText.textContent = "Finding questions...";
-                    const questions = parser.parseQuestions(rawText);
-
-                    if (questions.length === 0) {
-                        alert("Could not find any questions matching the required format in this PDF.");
-                        statusDiv.classList.add('hidden');
-                        return;
-                    }
-
-                    // Create and save new quiz
-                    const newQuiz = {
-                        id: utils.generateId(),
-                        name: file.name.replace('.pdf', ''),
-                        createdAt: Date.now(),
-                        questions: questions
-                    };
-
-                    state.savedQuizzes.unshift(newQuiz);
-                    utils.saveToStorage();
-                    
-                    statusDiv.classList.add('hidden');
-                    app.renderHome();
-                    
-                } catch (error) {
-                    console.error("Error parsing PDF:", error);
-                    alert("An error occurred while reading the PDF file.");
-                    statusDiv.classList.add('hidden');
-                }
-            },
-
-            deleteQuiz: (id) => {
-                if(confirm("Are you sure you want to delete this quiz?")) {
-                    state.savedQuizzes = state.savedQuizzes.filter(q => q.id !== id);
-                    utils.saveToStorage();
-                    app.renderHome();
-                }
-            },
-
-            // --- QUIZ VIEW LOGIC ---
-            startQuiz: (id) => {
-                const quiz = state.savedQuizzes.find(q => q.id === id);
-                if (!quiz) return;
-
-                state.activeQuiz = quiz;
-                if (quiz.progress) {
-                    state.currentIndex = quiz.progress.currentIndex || 0;
-                    state.userAnswers = { ...quiz.progress.userAnswers } || {};
-                    state.revealedAnswers = { ...quiz.progress.revealedAnswers } || {};
-                    state.elapsedTime = quiz.progress.elapsedTime || 0;
-                } else {
-                    app.resetQuizState();
-                }
-                app.renderQuizUI();
-                app.switchView('quiz');
-                app.startTimer();
-            },
-
-            resetQuizState: () => {
-                state.currentIndex = 0;
-                state.userAnswers = {};
-                state.revealedAnswers = {};
-                state.elapsedTime = 0;
-            },
-
-            renderQuizUI: () => {
-                const quiz = state.activeQuiz;
-                const index = state.currentIndex;
-                const question = quiz.questions[index];
-                
-                // Update Header & Progress
-                document.getElementById('quiz-title').textContent = quiz.name;
-                document.getElementById('quiz-progress-text').textContent = `Question ${index + 1} of ${quiz.questions.length}`;
-                const progressPct = ((index + 1) / quiz.questions.length) * 100;
-                document.getElementById('quiz-progress-bar').style.width = `${progressPct}%`;
-
-                // Update Question Text
-                document.getElementById('question-text').textContent = `${question.number}) ${question.text}`;
-
-                // Update Options
-                const optionsContainer = document.getElementById('options-container');
-                optionsContainer.innerHTML = '';
-                
-                const isRevealed = state.revealedAnswers[index];
-                const selectedAns = state.userAnswers[index];
-
-                ['A', 'B', 'C', 'D', 'E'].forEach(key => {
-                    const optionText = question.options[key];
-                    if (!optionText) return;
-
-                    const optionDiv = document.createElement('div');
-                    let baseClasses = 'border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 flex items-start gap-3 relative overflow-hidden ';
-                    
-                    const isSelected = selectedAns === key;
-                    const isCorrect = question.correctAnswer === key;
-
-                    // Styling logic based on state
-                    if (isRevealed) {
-                        optionDiv.style.pointerEvents = 'none'; // Disable clicking after reveal
-                        if (isCorrect) {
-                            baseClasses += 'bg-green-50 dark:bg-green-900/20 border-green-500 dark:border-green-500 text-green-900 dark:text-green-300';
-                        } else if (isSelected) {
-                            baseClasses += 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-500 text-red-900 dark:text-red-300';
-                        } else {
-                            baseClasses += 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-500 opacity-70';
-                        }
-                    } else {
-                        if (isSelected) {
-                            baseClasses += 'bg-blue-50 dark:bg-blue-900/20 border-primary dark:border-blue-500 text-primary dark:text-blue-400 shadow-sm';
-                        } else {
-                            baseClasses += 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300';
-                        }
-                        optionDiv.onclick = () => app.selectOption(key);
-                    }
-
-                    optionDiv.className = baseClasses;
-
-                    // Icon logic
-                    let iconHtml = `<div class="w-6 h-6 shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold mt-0.5 ${isSelected && !isRevealed ? 'border-primary dark:border-blue-500 bg-primary dark:bg-blue-500 text-white' : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400'}">
-                        ${isSelected && !isRevealed ? '<i class="fa-solid fa-check text-[10px]"></i>' : key}
-                    </div>`;
-
-                    if (isRevealed) {
-                        if (isCorrect) {
-                            iconHtml = `<div class="w-6 h-6 shrink-0 rounded-full bg-green-500 dark:bg-green-600 text-white flex items-center justify-center mt-0.5 shadow-sm"><i class="fa-solid fa-check text-xs"></i></div>`;
-                        } else if (isSelected) {
-                            iconHtml = `<div class="w-6 h-6 shrink-0 rounded-full bg-red-500 dark:bg-red-600 text-white flex items-center justify-center mt-0.5 shadow-sm"><i class="fa-solid fa-xmark text-xs"></i></div>`;
-                        }
-                    }
-
-                    optionDiv.innerHTML = `
-                        ${iconHtml}
-                        <div class="flex-grow pt-0.5 text-base font-medium">${utils.escapeHTML(optionText)}</div>
-                    `;
-                    
-                    optionsContainer.appendChild(optionDiv);
-                });
-
-                // Update Buttons
-                document.getElementById('btn-prev').disabled = index === 0;
-                
-                const btnNext = document.getElementById('btn-next');
-                const btnSubmit = document.getElementById('btn-submit');
-                const btnShow = document.getElementById('btn-show-answer');
-
-                if (index === quiz.questions.length - 1) {
-                    btnNext.classList.add('hidden');
-                    btnSubmit.classList.remove('hidden');
-                } else {
-                    btnNext.classList.remove('hidden');
-                    btnSubmit.classList.add('hidden');
-                }
-
-                // Show answer button state
-                if (isRevealed) {
-                    btnShow.innerHTML = '<i class="fa-regular fa-eye-slash mr-1"></i> Hide Answer';
-                    btnShow.classList.add('bg-amber-100', 'dark:bg-amber-900/50');
-                } else {
-                    btnShow.innerHTML = '<i class="fa-regular fa-eye mr-1"></i> Show Answer';
-                    btnShow.classList.remove('bg-amber-100', 'dark:bg-amber-900/50');
-                }
-            },
-
-            selectOption: (key) => {
-                if (state.revealedAnswers[state.currentIndex]) return; // Block changes if revealed
-                state.userAnswers[state.currentIndex] = key;
-                app.saveProgress();
-                app.renderQuizUI();
-            },
-
-            prevQuestion: () => {
-                if (state.currentIndex > 0) {
-                    state.currentIndex--;
-                    app.saveProgress();
-                    app.renderQuizUI();
-                }
-            },
-
-            nextQuestion: () => {
-                if (state.currentIndex < state.activeQuiz.questions.length - 1) {
-                    state.currentIndex++;
-                    app.saveProgress();
-                    app.renderQuizUI();
-                }
-            },
-
-            toggleAnswer: () => {
-                state.revealedAnswers[state.currentIndex] = !state.revealedAnswers[state.currentIndex];
-                app.saveProgress();
-                app.renderQuizUI();
-            },
-
-            // --- RESULTS VIEW LOGIC ---
-            submitQuiz: () => {
-                app.stopTimer();
-                const quiz = state.activeQuiz;
-                
-                let correctCount = 0;
-                quiz.questions.forEach((q, i) => {
-                    if (state.userAnswers[i] === q.correctAnswer) {
-                        correctCount++;
-                    }
-                });
-
-                const newAttempt = {
-                    id: utils.generateId(),
-                    date: Date.now(),
-                    correctCount: correctCount,
-                    total: quiz.questions.length,
-                    userAnswers: { ...state.userAnswers },
-                    elapsedTime: state.elapsedTime
-                };
-
-                if (!quiz.attempts) quiz.attempts = [];
-                quiz.attempts.push(newAttempt);
-                
-                // Clear active progress so a fresh try starts later
-                quiz.progress = null;
-                
-                app.resetQuizState(); 
-                utils.saveToStorage();
-
-                app.renderResults(newAttempt.id);
-                app.switchView('results');
-            },
-
-            redoQuiz: () => {
-                app.resetQuizState();
-                app.saveProgress(); // clear progress from storage
-                app.renderQuizUI();
-                app.switchView('quiz');
-                app.startTimer();
-            },
-
-            renderResults: (attemptId) => {
-                const quiz = state.activeQuiz;
-                if (!quiz.attempts || quiz.attempts.length === 0) return;
-
-                // Grab requested attempt, fallback to latest attempt
-                const attempt = attemptId 
-                    ? quiz.attempts.find(a => a.id === attemptId) || quiz.attempts[quiz.attempts.length - 1]
-                    : quiz.attempts[quiz.attempts.length - 1];
-
-                const userAnswersToReview = attempt.userAnswers;
-                const correctCount = attempt.correctCount;
-
-                // Render Attempts History UI
-                const attemptsSection = document.getElementById('attempts-section');
-                const attemptsList = document.getElementById('attempts-list');
-                
-                if (quiz.attempts.length > 1) {
-                    attemptsSection.classList.remove('hidden');
-                    attemptsList.innerHTML = '';
-                    quiz.attempts.forEach((att, idx) => {
-                        const btn = document.createElement('button');
-                        const isSelected = att.id === attempt.id;
-                        btn.className = `px-4 py-2 rounded-lg text-sm transition-colors text-left ${isSelected ? 'bg-primary text-white dark:bg-blue-600 shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 border border-transparent dark:border-gray-600'}`;
-                        const pct = Math.round((att.correctCount / att.total) * 100);
-                        const dateStr = new Date(att.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                        btn.innerHTML = `<span class="font-bold">Attempt ${idx + 1}</span> <span class="ml-1 opacity-80 font-medium">(${pct}%)</span><div class="text-[11px] opacity-70 mt-0.5">${dateStr}</div>`;
-                        btn.onclick = () => app.renderResults(att.id);
-                        attemptsList.appendChild(btn);
-                    });
-                } else {
-                    attemptsSection.classList.add('hidden');
-                }
-
-                const listContainer = document.getElementById('results-list');
-                listContainer.innerHTML = '';
-
-                quiz.questions.forEach((q, index) => {
-                    const userAns = userAnswersToReview[index];
-                    const isCorrect = userAns === q.correctAnswer;
-
-                    const itemDiv = document.createElement('div');
-                    itemDiv.className = 'flex flex-col gap-3';
-                    
-                    let headerBadge = isCorrect 
-                        ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 text-xs font-bold uppercase tracking-wider"><i class="fa-solid fa-check"></i> Correct</span>`
-                        : (userAns 
-                            ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 text-xs font-bold uppercase tracking-wider"><i class="fa-solid fa-xmark"></i> Incorrect</span>`
-                            : `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold uppercase tracking-wider"><i class="fa-solid fa-minus"></i> Skipped</span>`);
-
-                    let optionsHtml = '';
-                    ['A', 'B', 'C', 'D', 'E'].forEach(key => {
-                        if (!q.options[key]) return;
-                        const isThisCorrect = key === q.correctAnswer;
-                        const isThisUserSelected = key === userAns;
-                        
-                        let optClass = 'px-4 py-2.5 rounded-lg border text-sm flex gap-3 transition-colors ';
-                        let icon = `<span class="font-bold text-gray-400 dark:text-gray-500 w-5">${key}</span>`;
-
-                        if (isThisCorrect) {
-                            optClass += 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700 text-green-900 dark:text-green-300 font-medium';
-                            icon = `<i class="fa-solid fa-check text-green-600 dark:text-green-400 w-5 mt-0.5"></i>`;
-                        } else if (isThisUserSelected) {
-                            optClass += 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-900 dark:text-red-300 line-through decoration-red-300 dark:decoration-red-500/50';
-                            icon = `<i class="fa-solid fa-xmark text-red-600 dark:text-red-400 w-5 mt-0.5"></i>`;
-                        } else {
-                            optClass += 'border-transparent text-gray-600 dark:text-gray-400';
-                        }
-
-                        optionsHtml += `<div class="${optClass}">${icon} <span>${utils.escapeHTML(q.options[key])}</span></div>`;
-                    });
-
-                    itemDiv.innerHTML = `
-                        <div class="flex items-start justify-between gap-4 mb-2">
-                            <h4 class="font-semibold text-gray-800 dark:text-gray-100 text-lg leading-relaxed"><span class="text-gray-400 dark:text-gray-500 mr-1">${q.number}.</span> ${utils.escapeHTML(q.text)}</h4>
-                            ${headerBadge}
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 pl-6 border-l-2 ${isCorrect ? 'border-green-200 dark:border-green-800' : 'border-red-200 dark:border-red-800'}">
-                            ${optionsHtml}
-                        </div>
-                    `;
-                    listContainer.appendChild(itemDiv);
-                    
-                    // Add divider unless it's the last item
-                    if(index < quiz.questions.length - 1) {
-                        const divider = document.createElement('hr');
-                        divider.className = 'border-gray-100 dark:border-gray-700 my-4';
-                        listContainer.appendChild(divider);
-                    }
-                });
-
-                // Update Score visuals
-                document.getElementById('results-quiz-title').textContent = quiz.name;
-                const percentage = Math.round((correctCount / quiz.questions.length) * 100);
-                document.getElementById('score-percentage').textContent = `${percentage}%`;
-                document.getElementById('score-fraction').textContent = `${correctCount}/${quiz.questions.length}`;
-                document.getElementById('results-time-taken').textContent = `Time Taken: ${utils.formatTime(state.elapsedTime)}`;
-                
-                // Animate SVG Circle
-                const circle = document.getElementById('score-circle');
-                const strokeDasharray = `${percentage}, 100`;
-                circle.setAttribute('stroke-dasharray', '0, 100'); // reset
-                setTimeout(() => {
-                    circle.style.transition = 'stroke-dasharray 1s ease-out';
-                    circle.setAttribute('stroke-dasharray', strokeDasharray);
-                }, 100);
-
-                // Adjust color based on score
-                circle.classList.remove('text-primary', 'text-green-500', 'text-red-500', 'text-amber-500');
-                if (percentage >= 80) circle.classList.add('text-green-500');
-                else if (percentage >= 60) circle.classList.add('text-amber-500');
-                else circle.classList.add('text-red-500');
-            }
-        };
-
-        // Initialize App on load
-        window.addEventListener('DOMContentLoaded', app.init);
-
-    </script>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+<div id="toasts" class="ui fixed top-4 right-4 left-4 sm:left-auto sm:w-96 z-50 space-y-2"></div>
+
+<main class="max-w-2xl mx-auto px-4 py-10">
+  <h1 class="text-2xl font-semibold mb-6 text-center">Test bank quiz</h1>
+
+  <!-- Upload -->
+  <section id="upload" class="bg-slate-800 rounded-xl p-8 text-center ui border border-slate-700">
+    <label for="file" id="drop" class="block cursor-pointer border-2 border-dashed border-slate-600 hover:border-indigo-400 rounded-lg p-10">
+      <p class="text-lg">Drop a test bank PDF here, or click to choose one</p>
+      <p class="text-sm text-slate-400 mt-2">Everything is parsed in your browser. Nothing is uploaded.</p>
+    </label>
+    <input id="file" type="file" accept="application/pdf" class="hidden">
+    <p id="status" class="text-sm text-slate-400 mt-4 h-5"></p>
+  </section>
+
+  <!-- Quiz -->
+  <section id="quiz" class="hidden ui">
+    <div class="flex items-center justify-between text-sm text-slate-400 mb-2">
+      <span id="progress">Question 1 of 1</span>
+      <span>Score <span id="score" class="text-slate-100 font-medium">0</span> · <span id="timer" class="tabular-nums text-slate-100">00:00</span></span>
+    </div>
+    <div class="h-1.5 bg-slate-800 rounded-full mb-5 overflow-hidden"><div id="bar" class="h-full bg-indigo-400 transition-all" style="width:0%"></div></div>
+    <div class="bg-slate-800 rounded-xl p-6 sm:p-8 border border-slate-700">
+      <p id="stem" class="text-lg leading-relaxed mb-6" style="font-family:Georgia,serif"></p>
+      <div id="options" class="space-y-3"></div>
+      <div class="flex gap-3 mt-8">
+        <button id="show" class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 font-medium">Show answer</button>
+        <button id="next" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 font-medium ml-auto">Next question</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section id="results" class="hidden ui bg-slate-800 rounded-xl p-8 text-center border border-slate-700">
+    <h2 class="text-xl font-semibold">Quiz complete</h2>
+    <p id="final" class="text-slate-300 mt-3"></p>
+    <button id="again" class="mt-6 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 font-medium">Load another PDF</button>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let questions = [], cur = 0, score = 0, t0 = 0, tick = null;
+
+/* ---------- Toasts ---------- */
+function toast(msg, type = 'error') {
+  const el = document.createElement('div');
+  el.className = 'rounded-lg px-4 py-3 text-sm shadow-lg border ' + (type === 'error' ? 'bg-red-950 border-red-700 text-red-100' : 'bg-amber-950 border-amber-700 text-amber-100');
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = 0; el.style.transition = 'opacity .4s'; setTimeout(() => el.remove(), 400); }, 4500);
+}
+
+/* ---------- PDF text extraction ---------- */
+async function extractText(buf) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let out = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const items = (await (await pdf.getPage(p)).getTextContent()).items;
+    let lastY = null, lastEnd = null;
+    for (const it of items) {
+      if (!it.str && !it.hasEOL) continue;
+      const x = it.transform[4], y = it.transform[5];
+      if (lastY !== null && Math.abs(y - lastY) > 2) { out += '\n'; lastEnd = null; }
+      else if (lastEnd !== null && x - lastEnd > 1 && !/\s$/.test(out) && !/^\s/.test(it.str)) out += ' ';
+      out += it.str;
+      if (it.hasEOL) { out += '\n'; lastEnd = null; } else lastEnd = x + (it.width || 0);
+      lastY = y;
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+/* ---------- Regex parsing ---------- */
+const norm = s => s.replace(/\s+/g, ' ').trim();
+
+function cleanLines(text) {
+  return text.split('\n')
+    .map(l => l.replace(/\.(\d{1,3}-\d{1,3})\s*$/, '.'))
+    .filter(l => !/^\s*Copyright ©/i.test(l) && !/^\s*\d{1,3}-\d{1,3}\s*$/.test(l))
+    .map(l => l.trim()).filter(Boolean);
+}
+
+// Split lines into blocks that start at sequential "N. text" lines.
+function toBlocks(lines, stopAtAACSB) {
+  const blocks = []; let expected = 1, cur = null;
+  for (const l of lines) {
+    const m = l.match(/^(\d{1,3})\.\s+\S/);
+    if (m && +m[1] === expected) { cur = { num: expected++, lines: [l], done: false }; blocks.push(cur); continue; }
+    if (!cur || cur.done) continue;
+    if (stopAtAACSB && /^AACSB:/.test(l)) { cur.done = true; continue; }
+    cur.lines.push(l);
+  }
+  return blocks;
+}
+
+function parseQuestion(block) {
+  let stem = '', opts = [], target = 'stem', next = 'A';
+  block.lines.forEach((l, i) => {
+    if (i === 0) l = l.replace(/^\d+\.\s*/, '');
+    const m = l.match(/^([A-E])\.\s+(.*)$/);
+    if (m && m[1] === next) { opts.push({ letter: m[1], text: m[2] }); next = String.fromCharCode(next.charCodeAt(0) + 1); target = 'opt'; }
+    else if (target === 'stem') stem += ' ' + l;
+    else opts[opts.length - 1].text += ' ' + l;
+  });
+  return { num: block.num, stem: norm(stem), options: opts.map(o => ({ letter: o.letter, text: norm(o.text) })), answerText: null };
+}
+
+function extractAnswer(block, q) {
+  let t = norm(block.lines.join(' ').replace(/^\d+\.\s*/, ''));
+  const rm = s => {
+    s = norm(s); if (!s) return;
+    const i = t.toLowerCase().indexOf(s.toLowerCase());
+    if (i >= 0) t = norm(t.slice(0, i) + ' ' + t.slice(i + s.length));
+  };
+  rm(q.stem);
+  q.options.forEach(o => { const before = t; rm(o.letter + '. ' + o.text); if (t === before) rm(o.text); });
+  return t || null;
+}
+
+function parseBank(text) {
+  const keyRe = /Test Bank\s*[-–—]\s*Static\s*Key/gi;
+  let keyIdx = -1, m;
+  while ((m = keyRe.exec(text))) keyIdx = m.index;
+  const qText = keyIdx >= 0 ? text.slice(0, keyIdx) : text;
+  let kText = keyIdx >= 0 ? text.slice(keyIdx) : '';
+  const sum = kText.search(/Test Bank\s*[-–—]\s*Static\s*Summary/i);
+  if (sum >= 0) kText = kText.slice(0, sum);
+
+  const qs = toBlocks(cleanLines(qText), false).map(parseQuestion).filter(q => q.options.length >= 2);
+  const kBlocks = toBlocks(cleanLines(kText), true);
+  qs.forEach(q => {
+    const kb = kBlocks.find(b => b.num === q.num);
+    if (kb) q.answerText = extractAnswer(kb, q);
+  });
+  if (!kText) toast('No “Static Key” section found. Answers will be unavailable.', 'warn');
+  return qs;
+}
+
+/* ---------- Answer matching (text of key vs. rendered options) ---------- */
+const STOP = new Set(['the', 'a', 'an', 'of', 'to', 'is', 'are', 'and', 'or', 'in', 'as', 'be', 'by', 'that', 'for']);
+const stm = w => (w.length > 4 && /[a-z]$/.test(w)) ? w.replace(/(ing|ed|es|s)$/, '') : w;
+const toks = s => (s.toLowerCase().match(/\d+(?:\.\d+)?|[a-z]+/g) || []).filter(w => !STOP.has(w)).map(stm);
+const bigrams = t => { const m = new Map(); for (let i = 1; i < t.length; i++) { const k = t[i - 1] + ' ' + t[i]; m.set(k, (m.get(k) || 0) + 1); } return m; };
+function dice(a, b) {
+  const A = bigrams(a), B = bigrams(b); let hit = 0, na = 0, nb = 0;
+  A.forEach((v, k) => { na += v; hit += Math.min(v, B.get(k) || 0); }); B.forEach(v => nb += v);
+  return na + nb ? 2 * hit / (na + nb) : 0;
+}
+function filled(stem, opt) {
+  const blanks = stem.match(/_{2,}/g);
+  if (!blanks) return stem + ' ' + opt;
+  const segs = opt.split(/\s*;\s*/);
+  if (segs.length === blanks.length) { let i = 0; return stem.replace(/_{2,}/g, () => segs[i++]); }
+  return blanks.length === 1 ? stem.replace(/_{2,}/, opt) : stem + ' ' + opt;
+}
+function bestMatch(answer, optTexts, stem) {
+  const at = toks(answer), aj = ' ' + at.join(' ') + ' ';
+  const isAll = t => /^all of the (options|above)/i.test(t), isNone = t => /^none of the/i.test(t);
+  const meta = optTexts.map(t => isAll(t) || isNone(t));
+  const contig = optTexts.map((t, i) => !meta[i] && toks(t).length > 0 && aj.includes(' ' + toks(t).join(' ') + ' '));
+  if (contig.filter(Boolean).length >= 2) {
+    let i = optTexts.findIndex(isAll); if (i < 0) i = optTexts.findIndex(isNone);
+    if (i >= 0) return { idx: i, score: 1 };
+  }
+  const aset = new Set(at);
+  let best = { idx: -1, score: 0 };
+  optTexts.forEach((t, i) => {
+    if (meta[i]) return;
+    const ot = toks(t); if (!ot.length) return;
+    const cont = ot.filter(w => aset.has(w)).length / ot.length;
+    const s = 0.6 * cont + 0.4 * dice(toks(filled(stem, t)), at) + (contig[i] ? 0.2 : 0);
+    if (s > best.score) best = { idx: i, score: s };
+  });
+  return best.score < 0.35 ? { idx: -1, score: best.score } : best;
+}
+
+/* ---------- Quiz UI ---------- */
+const BASE = 'opt w-full text-left rounded-lg border px-4 py-3 flex gap-3 transition-colors ';
+const IDLE = 'border-slate-600 bg-slate-900/40 hover:border-indigo-400';
+
+function render() {
+  const q = questions[cur];
+  $('progress').textContent = `Question ${cur + 1} of ${questions.length}`;
+  $('bar').style.width = (cur / questions.length * 100) + '%';
+  $('stem').textContent = `${q.num}. ${q.stem}`;
+  $('options').innerHTML = '';
+  q.options.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.className = BASE + IDLE; b.dataset.i = i;
+    b.innerHTML = '<span class="font-semibold text-slate-400"></span><span class="opt-text"></span>';
+    b.children[0].textContent = o.letter + '.'; b.children[1].textContent = o.text;
+    b.onclick = () => select(i);
+    $('options').appendChild(b);
+  });
+  q.selected = null; q.locked = false;
+  $('show').disabled = false; $('show').classList.remove('opacity-50');
+  $('next').textContent = cur === questions.length - 1 ? 'Finish' : 'Next question';
+}
+
+function select(i) {
+  const q = questions[cur]; if (q.locked) return;
+  q.selected = i;
+  [...$('options').children].forEach((b, j) => b.className = BASE + (j === i ? 'border-indigo-400 bg-indigo-500/20' : IDLE));
+}
+
+$('show').onclick = () => {
+  const q = questions[cur]; if (q.locked) return;
+  if (!q.answerText) { toast(`No answer key found for question ${q.num}.`); return; }
+  const btns = [...$('options').children];
+  const texts = btns.map(b => b.querySelector('.opt-text').textContent);
+  const { idx } = bestMatch(q.answerText, texts, q.stem);
+  q.locked = true; $('show').disabled = true; $('show').classList.add('opacity-50');
+  btns.forEach(b => b.classList.add('cursor-default'));
+  if (idx < 0) { toast(`Couldn’t find the option text for question ${q.num} in the key.`); return; }
+  btns.forEach((b, j) => {
+    if (j === idx) b.className = BASE + 'cursor-default border-green-500 bg-green-600/25';
+    else if (j === q.selected) b.className = BASE + 'cursor-default border-red-500 bg-red-600/20';
+    else b.className = BASE + 'cursor-default border-slate-700 opacity-60';
+  });
+  if (q.selected === idx) { score++; $('score').textContent = score; }
+};
+
+$('next').onclick = () => {
+  if (cur < questions.length - 1) { cur++; render(); return; }
+  clearInterval(tick); $('bar').style.width = '100%';
+  $('quiz').classList.add('hidden'); $('results').classList.remove('hidden');
+  $('final').textContent = `You scored ${score} of ${questions.length} in ${$('timer').textContent}.`;
+};
+$('again').onclick = () => { $('results').classList.add('hidden'); $('upload').classList.remove('hidden'); $('status').textContent = ''; $('file').value = ''; };
+
+function startQuiz(qs) {
+  questions = qs; cur = 0; score = 0; $('score').textContent = 0;
+  $('upload').classList.add('hidden'); $('quiz').classList.remove('hidden');
+  t0 = Date.now(); clearInterval(tick);
+  tick = setInterval(() => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    $('timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }, 500);
+  render();
+  const missing = qs.filter(q => !q.answerText).map(q => q.num);
+  if (missing.length) toast(`No answer key found for question${missing.length > 1 ? 's' : ''} ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}.`, 'warn');
+}
+
+/* ---------- File handling ---------- */
+async function handleFile(f) {
+  if (!f) return;
+  if (typeof pdfjsLib === 'undefined') { toast('pdf.js failed to load. Check your connection and reload.'); return; }
+  $('status').textContent = 'Reading PDF…';
+  try {
+    const text = await extractText(await f.arrayBuffer());
+    const qs = parseBank(text);
+    $('status').textContent = '';
+    if (!qs.length) { toast('No questions found. Questions need to look like “1. Question text” with “A. Option” lines.'); return; }
+    startQuiz(qs);
+  } catch (e) {
+    $('status').textContent = '';
+    toast('Couldn’t read that PDF: ' + (e.message || e));
+  }
+}
+$('file').onchange = e => handleFile(e.target.files[0]);
+['dragover', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => {
+  e.preventDefault(); if (ev === 'drop') handleFile(e.dataTransfer.files[0]);
+}));
+</script>
 </body>
 </html>
